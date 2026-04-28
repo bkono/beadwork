@@ -4,6 +4,8 @@
 # AI Agent cruft
 CLAUDE.md
 .claude
+.pi/
 
 # Code Coverage
 coverage.out
+
