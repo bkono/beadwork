@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 // escChar is the escape prefix used to protect literal { in user content.

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jallum/beadwork/internal/treefs"
+	"github.com/bkono/beadwork/internal/treefs"
 )
 
 type Comment struct {

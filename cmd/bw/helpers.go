@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
 var repoDir string // set by -C flag; empty means use cwd

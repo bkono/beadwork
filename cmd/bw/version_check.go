@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 const (

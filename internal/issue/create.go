@@ -3,7 +3,7 @@ package issue
 import (
 	"fmt"
 
-	"github.com/jallum/beadwork/internal/treefs"
+	"github.com/bkono/beadwork/internal/treefs"
 )
 
 func NewStore(fs *treefs.TreeFS, prefix string) *Store {

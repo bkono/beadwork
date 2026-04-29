@@ -3,7 +3,7 @@ package issue_test
 import (
 	"testing"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 func TestStatusNames(t *testing.T) {

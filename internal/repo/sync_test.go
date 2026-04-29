@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jallum/beadwork/internal/intent"
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/intent"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 func intPtr(n int) *int { return &n }

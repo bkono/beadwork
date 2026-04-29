@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jallum/beadwork/prompts"
+	"github.com/bkono/beadwork/prompts"
 )
 
 func TestCmdOnboardBasic(t *testing.T) {

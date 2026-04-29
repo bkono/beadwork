@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jallum/beadwork/internal/intent"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/intent"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 // commitHashFromString converts a hex hash string to plumbing.Hash.

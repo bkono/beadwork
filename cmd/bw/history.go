@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
 // HistoryArgs holds parsed arguments for the history command.

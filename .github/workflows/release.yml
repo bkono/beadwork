@@ -8,7 +8,7 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: github.repository == 'jallum/beadwork'
+    if: github.repository == 'bkono/beadwork'
     permissions:
       contents: write
     steps:

@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
-	"github.com/jallum/beadwork/internal/tmpl"
-	"github.com/jallum/beadwork/prompts"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/tmpl"
+	"github.com/bkono/beadwork/prompts"
 )
 
 type StartArgs struct {

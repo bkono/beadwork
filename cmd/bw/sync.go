@@ -3,12 +3,12 @@ package main
 import (
 	"fmt"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jallum/beadwork/internal/intent"
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/intent"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
 func cmdSync(store *issue.Store, args []string, w Writer, _ *config.Config) (*config.Config, error) {
