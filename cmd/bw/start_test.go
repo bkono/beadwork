@@ -148,6 +148,9 @@ func TestCmdStartNoPRHintByDefault(t *testing.T) {
 	if strings.Contains(buf.String(), "open a PR") {
 		t.Errorf("output should not mention PR without config: %q", buf.String())
 	}
+	if strings.Contains(strings.ToLower(buf.String()), "worktree") {
+		t.Errorf("default start output should not assume worktrees: %q", buf.String())
+	}
 }
 
 func TestCmdStartEpicLanding(t *testing.T) {

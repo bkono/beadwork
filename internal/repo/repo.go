@@ -482,10 +482,13 @@ func (r *Repo) GetGitContext() GitContext {
 		ctx.LastCommit = strings.TrimSpace(out)
 	}
 
-	// .git is a file in worktrees, a directory in the main working tree
-	dotGit := filepath.Join(r.CWD, ".git")
-	if fi, err := os.Stat(dotGit); err == nil && !fi.IsDir() {
-		ctx.IsWorktree = true
+	// .git is a file in linked worktrees and a directory in the main working tree.
+	// Resolve the repository top-level first so this works from subdirectories too.
+	if out, err := execGit(r.CWD, "rev-parse", "--show-toplevel"); err == nil {
+		dotGit := filepath.Join(strings.TrimSpace(out), ".git")
+		if fi, statErr := os.Stat(dotGit); statErr == nil && !fi.IsDir() {
+			ctx.IsWorktree = true
+		}
 	}
 
 	return ctx

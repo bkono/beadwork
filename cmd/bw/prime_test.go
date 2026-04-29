@@ -89,3 +89,26 @@ func TestCmdPrimeTemplateProcessing(t *testing.T) {
 		t.Errorf("output contains unprocessed template directives: %q", out)
 	}
 }
+
+func TestCmdPrimeCurrentBranchDefault(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+
+	var buf bytes.Buffer
+	_, err := cmdPrime(env.Store, nil, PlainWriter(&buf), nil)
+	if err != nil {
+		t.Fatalf("cmdPrime: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Default: Work Here") {
+		t.Errorf("output missing current-branch default section: %q", out)
+	}
+	if !strings.Contains(out, "Use the current branch") {
+		t.Errorf("output should tell agents to use the current branch by default: %q", out)
+	}
+	for _, old := range []string{"This is the only way to land cleanly", "**Worktree**: Create a worktree", "One ticket, one worktree"} {
+		if strings.Contains(out, old) {
+			t.Errorf("output contains old worktree-first guidance %q: %q", old, out)
+		}
+	}
+}

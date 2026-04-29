@@ -1,7 +1,7 @@
 {{/* See docs/prompts/prime.md */}}
 {{ if .WorktreeDirty -}}
 > [!WARNING]
-> The working tree has uncommitted changes. Ask the user what to do with them before starting new work. Do not begin research or coding until this is resolved.
+> This checkout has uncommitted changes. Before editing, identify whether they are yours, user work, or another agent's progress. Ask before touching unclear changes.
 
 {{ end -}}
 # Beadwork
@@ -14,7 +14,56 @@ Due dates (`bw update <id> --due <date>`) are deadlines that do not change statu
 
 ## Where You Are
 
-{{ if .Git.IsWorktree }}Worktree{{ else }}Branch{{ end }} `{{ .Git.Branch }}`{{ if .Git.Dirty }} · **uncommitted changes**{{ else }} · clean{{ end }} · last commit: `{{ .Git.LastCommit }}`
+Current checkout: {{ if .Git.IsWorktree }}worktree on{{ else }}branch{{ end }} `{{ .Git.Branch }}`{{ if .Git.Dirty }} · **uncommitted changes**{{ else }} · clean{{ end }} · last commit: `{{ .Git.LastCommit }}`
+
+## Default: Work Here
+
+Use the current branch and checkout the user put you in. That can be `main`. Do not create a branch, PR, or worktree unless the user asks, repo config requires it, or you need isolation and the user agrees.
+
+Pick the lightest durable workflow that fits:
+
+- **Quick fix**: make the scoped change in the current checkout. No ticket needed unless the user asks.
+- **Tracked task**: use an existing issue or create one (`bw create "Title" --description "..." -t task`), then `bw start <id>` and work on the current branch.
+- **Multi-step / swarm**: create an epic with child tasks and dependencies. Multiple agents may collaborate on this same branch by claiming separate children and leaving comments.
+- **Branch / PR / worktree**: optional delivery modes. Use them only when requested or configured; `bw start` will show PR-specific landing hints when this repo is configured for PR review.
+
+## Plans Are Scratch — Tickets Survive
+
+Plan however you want. Your plan is useful for thinking, but it lives in context and dies at compaction. Before you execute a multi-step plan, materialize it into beadwork:
+
+1. Create an epic: `bw create "Epic title" -t epic --description "..."`
+2. Create a child task for each step: `bw create "Step title" --parent <epic> --description "..."`
+3. Wire dependencies: `bw dep add <blocker> blocks <blocked>`
+4. Include a mermaid sequencing graph in the plan so the dependency structure is visible:
+   ```mermaid
+   graph LR
+       1 --> 2
+       1 --> 3
+       2 --> 4
+       3 --> 4
+   ```
+
+## Workflow
+
+1. **Orient**: check the current branch, dirty state, WIP, and ready queue. Do not overwrite changes you do not own.
+2. **Claim**: for tracked work, run `bw start <id>` before editing. For quick fixes, proceed without ceremony.
+3. **Work**: keep edits scoped to the current task. Use `bw comment <id> "..."` for breadcrumbs, handoffs, and swarm coordination.
+4. **Land**: commit scoped changes referencing the ticket ID when there is one, then `bw close <id>`.
+5. **Sync**: run `bw sync` so the durable beadwork state reaches collaborators and future sessions.
+
+What isn't committed, closed, and synced will pollute the next session.
+
+## Delegation
+
+Sub-agents do not inherit your context. Current-branch swarms are valid: give each agent a child ticket or non-overlapping file scope, and have them coordinate through comments. Use separate branches/worktrees only when the user wants isolation or concurrent edits would collide.
+
+Include the workflow in the handoff:
+
+```
+Run `bw start <id>`. Make the scoped change on the current branch. Commit referencing <id>. Comment with handoff notes. Run `bw close <id>`.
+```
+
+Verify the work landed after the agent returns.
 
 {{ if .ExpiredDeferrals -}}
 ## Reminders
@@ -35,49 +84,5 @@ The following items were deferred and are now due for attention:
 ## Currently available work:
 
 {{ bw "ready" "--no-context" }}
-
-## How Should This Land?
-
-Before starting work, ask the user how they want it delivered:
-
-- **Quick fix**: Just make the change in the working tree. No ticket needed.
-- **Branch/PR**: Create a ticket first (`bw create "Title" --description "..." -t task`) and work in a worktree. This is the only way to land cleanly.
-- **Multi-step**: Create an epic with children and dependencies (see below).
-
-If the user doesn't specify, default to asking. The cost of asking once is lower than the cost of delivering work in the wrong form.
-
-## Plans Are Scratch — Tickets Survive
-
-Plan however you want. Your plan is useful for thinking, but it lives in context and dies at compaction. Before you start executing a plan, materialize it into beadwork:
-
-1. Create an epic: `bw create "Epic title" -t epic --description "..."`
-2. Create a child task for each step: `bw create "Step title" --parent <epic> --description "..."`
-3. Wire dependencies: `bw dep add <blocker> blocks <blocked>`
-4. Include a mermaid sequencing graph in the plan so the dependency structure is visible:
-   ```mermaid
-   graph LR
-       1 --> 2
-       1 --> 3
-       2 --> 4
-       3 --> 4
-   ```
-
-## Workflow
-
-1. **Worktree**: Create a worktree with branch `<id>/<short-description>` (e.g. `{{ .Prefix }}-a1b/fix-auth-bug`)
-2. **Claim**: `bw start <id>`
-3. **Work**: One ticket, one worktree
-4. **Land**: Commit with ticket ID → `bw close <id>` → `bw sync`
-5. **Clean up**: Remove worktree, leave branch
-
-What isn't committed, closed, and synced will polute the next session.
-
-**Delegation**: Each delegated task needs its own worktree — without isolation, agents corrupt each other's state. Agents that can't request approvals can't land work — plan accordingly. Create a ticket for each delegated task first, then include in the agent prompt:
-
-```
-Run `bw start <id>`. Make the change. Commit referencing <id>. Run `bw close <id>`.
-```
-
-Verify the work landed after the agent returns.
 
 `bw comment <id> "..."` = breadcrumbs. `bw --help` for everything. `--json` gets you raw data.
