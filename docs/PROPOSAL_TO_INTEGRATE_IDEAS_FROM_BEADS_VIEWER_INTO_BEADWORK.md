@@ -1,1097 +1,1643 @@
-# Proposal: Graph-Native Agent Throughput for Beadwork
+# Proposal: Beadwork as a Git-Native Swarm Control Plane
 
-**Status:** Draft proposal  
+**Status:** Expanded draft proposal  
 **Audience:** beadwork CLI maintainers, pi-beadwork-extension maintainers, agent-workflow designers  
 **Source research:** `/tmp/beads_viewer-research`, current `beadwork` repo, and `@solvedbydev/pi-beadwork-extension` architecture  
-**Constraint:** This is a planning document only. It intentionally does not implement code or create tickets.
+**Constraint:** Planning document only. It intentionally does not implement code or create tickets.
 
 ---
 
 ## 1. Executive summary
 
-Beadwork already has the most important substrate for durable AI-agent work: issues live in git, the CLI owns mutation, `bw prime` injects live workflow context, and `bw start` can brief an agent at the moment it claims work. The pi extension adds the missing operator layer: scoped sessions, delegated workers, worker supervision, validation, review, and landing.
+The first proposal was directionally correct but too small: it treated `beads_viewer` mainly as a graph triage engine to adapt into `bw triage` and `bw plan`. That is useful, but it is not the real opportunity.
 
-The main gap is not storage or basic issue operations. The gap is **throughput intelligence**: agents need a graph-aware answer to:
+The more ambitious opportunity is this:
 
-- What should I work on next?
-- Which blocker should be cleared first to maximize downstream unlocks?
-- Which tasks can run in parallel without stepping on each other?
-- Is the project graph healthy enough to delegate to a swarm?
-- What context should a worker receive so it does not waste a turn rediscovering the graph?
+> **Beadwork can become a git-native control plane for agent swarms: a local, durable, self-improving work graph that fuses issues, dependencies, recent commits, file ownership, labels/domains, worker state, validation results, and prompt context into one operational system.**
 
-`beads_viewer` demonstrates this missing layer well. Its strongest idea is not the Bubble Tea UI; it is its **robot-first graph triage contract**: deterministic JSON/TOON outputs, explainable recommendations, graph health, cycle alerts, parallel execution tracks, command suggestions, history/diff views, and agent-safe entry points like `bv --robot-triage`, `--robot-next`, and `--robot-plan`.
+`beads_viewer` is valuable because it proves that agents should not parse raw task lists. They need deterministic, graph-aware, low-context, machine-readable decision support. But beadwork has something `beads_viewer` does not: mutation authority, a typed intent log, prompt injection via `bw prime`, claim-time briefs via `bw start`, and pi-managed workers with worktrees, validation, review, and landing.
 
-This proposal adapts those ideas into beadwork’s native architecture instead of copying `beads_viewer` wholesale. The recommended direction is:
+That combination enables a product category beyond both tools:
 
-> Turn beadwork into a git-native graph intelligence engine for agent swarms, where `bw prime`, `bw start`, `bw ready`, and pi worker orchestration all consume the same deterministic triage and planning model.
+- not a standalone viewer,
+- not a local issue tracker,
+- not merely a task graph,
+- but an **agent operating layer** that decides what should happen next, assigns safe parallel work, briefs workers, predicts conflicts, validates plans, learns from outcomes, and preserves all of it in git.
 
-The first valuable slice is deliberately small:
+The proposed north star:
 
-1. Add an internal graph/triage package over beadwork issues and blocking edges.
-2. Add `bw triage --json` and `bw plan --json`.
-3. Add `bw ready --ranked` as a human-friendly view over the same scorer.
-4. Inject compact graph intelligence into `bw prime` and `bw start`.
-5. Teach `/bw run` in the pi extension to launch workers by execution track, not just by flat ready order.
+> **Every agent session starts with a graph-aware control-plane brief; every worker is launched from an explainable execution plan; every close/land event updates causal project memory; every future recommendation improves because beadwork knows what work changed which code.**
 
-This preserves what the user likes about beadwork—git-native state, dynamic prompts, `prime`, `start`, delegated workers—while regaining the high-quality ranking and graph setup that become inaccessible when moving away from the `.beads/beads.jsonl` + `beads_viewer` ecosystem.
+The first implementation should still be incremental, but the design should point toward a disruptive system:
 
----
+1. **Swarm Intelligence Core** — `bw triage`, `bw plan`, `bw partition`, `bw validate-plan`.
+2. **Causal Work Memory** — typed event stream from beadwork intents plus issue↔commit↔file correlation.
+3. **Context Compiler** — role-specific `bw prime --for planner|worker|reviewer|orchestrator` and `bw brief` packs.
+4. **Conflict-Aware Orchestration** — pi `/bw run` schedules by dependency tracks and predicted file overlap.
+5. **Adaptive Feedback Loop** — recommendation outcomes, worker results, remediation, validation failures, and operator feedback feed future scoring.
+6. **Graph Health / Drift / Alerts** — proactive warnings when the work graph becomes unsafe or low-throughput.
+7. **Recipes and Query Layer** — saved operational views like `high-impact`, `recently-drifted`, `safe-parallel`, `release-cut`, and `needs-human`.
 
-## 2. Normalized intent
-
-The desired outcome is not “port beads_viewer.” The desired outcome is to make beadwork support the same kind of high-throughput Jeffery Emanuel / agent-flywheel workflow without requiring a separate local single-repo beads stack.
-
-More specifically:
-
-- Keep beadwork as the source of truth.
-- Keep the CLI mutation model: agents mutate through `bw`, not by editing JSON files directly.
-- Preserve the pi extension’s worker lifecycle and landing machinery.
-- Add deterministic, machine-readable graph intelligence as a first-class beadwork capability.
-- Use graph intelligence to improve ranking, task graph setup, worker assignment, prompt context, and supervision.
-- Make the result feel native to beadwork, not like a compatibility shim around `bv`.
-
-The core product bet:
-
-> Beadwork should become the agent-native work graph, while pi-beadwork-extension becomes the graph-aware operator console and swarm launcher.
+The result would make beadwork more compelling than a `beads_rust` + `beads_viewer` setup for the user’s real workflow: many high-priority workers, recent-commit-aware planning, graph setup, and Jeffery Emanuel-style agent flywheels — but native to beadwork’s git branch model and pi’s delegation machinery.
 
 ---
 
-## 3. Success criteria
+## 2. Product thesis
 
-### Agent workflow success
+### 2.1 The shallow interpretation
 
-- An agent can run one command and receive a deterministic ranked recommendation with reasons.
-- `bw prime` tells an agent about graph health, top blockers, and the highest-leverage next moves before the agent acts.
-- `bw start <id>` produces a richer work brief including why the issue matters, what it unlocks, active blockers/dependents, parent/subtree context, and suggested validation.
-- `/bw run <epic>` launches independent worker tracks instead of blindly consuming the first N ready tickets.
-- A swarm can keep high-priority workers busy while avoiding dependency conflicts.
+A shallow reading says:
 
-### Technical success
+> “`beads_viewer` has graph ranking. Add graph ranking to beadwork.”
 
-- The first implementation is small enough to land safely inside the Go CLI.
-- No dependency on `.beads/beads.jsonl`, `br`, `bd`, or the `bv` binary.
-- Graph output is deterministic and stable under tests.
-- JSON output is schema-friendly and explicitly versioned.
-- Human output remains concise; verbose intelligence is opt-in or template-driven.
-- Existing command behavior remains backward-compatible.
+That is worth doing, but it is not enough. It would reproduce a subset of `bv --robot-triage` and still leave beadwork as a CLI that answers isolated questions.
 
-### Product success
+### 2.2 The deeper interpretation
 
-- Beadwork becomes compelling for users who like `beads_viewer` ranking but want git-native branch-backed issue storage.
-- The pi extension gains a reasoned orchestration policy instead of a queue-only policy.
-- The design highlights existing beadwork strengths instead of replacing them.
+The deeper reading is:
 
----
+> **AI-agent work management is not a queue problem. It is a control problem.**
 
-## 4. Non-goals
+A control system needs to know:
 
-This proposal does **not** recommend:
+- the current work graph,
+- the desired outcome,
+- the active workers,
+- the dependency constraints,
+- the code areas likely to be touched,
+- the recent changes,
+- the validation state,
+- the landing order,
+- and the feedback from previous attempts.
 
-- Porting the `beads_viewer` TUI.
-- Requiring `.beads/beads.jsonl` as beadwork’s storage format.
-- Depending on `beads_viewer`, `br`, or `bd` at runtime.
-- Reimplementing every graph metric in `beads_viewer` immediately.
-- Adding a background daemon to beadwork CLI.
-- Replacing pi-beadwork-extension worker supervision with a separate orchestration system.
-- Building semantic search, embeddings, WASM graph rendering, sprint capacity planning, or full history analytics in the MVP.
-- Automatically mutating task priorities based on scores.
+Then it needs to decide:
 
-The goal is to extract the durable idea: **robot-first graph-aware triage for agents**.
+- what to do next,
+- what can happen in parallel,
+- what must not happen yet,
+- where a human should intervene,
+- what context each worker needs,
+- how to update the plan when reality changes.
 
----
+`beads_viewer` contributes the graph and robot-output instincts. Beadwork can turn those instincts into a full control loop because beadwork owns the durable event stream and pi owns the worker lifecycle.
 
-## 5. Repo context: current beadwork strengths
+### 2.3 The bold bet
 
-### 5.1 Git-native issue store
+The bold bet is that beadwork can become the **local-first equivalent of an agent engineering manager**:
 
-Beadwork stores issue state on a dedicated `beadwork` branch, using a `treefs` abstraction that reads and writes git trees with compare-and-swap semantics. This gives beadwork several advantages for graph intelligence:
+- It ranks work.
+- It decomposes and validates plans.
+- It schedules parallel workers.
+- It predicts conflicts.
+- It creates compact worker briefs.
+- It watches graph drift.
+- It remembers why decisions were made.
+- It learns which recommendations actually produced successful landed code.
 
-- The issue graph is already versioned.
-- Sync is already a git operation.
-- History and branch context are naturally available.
-- Agents can coordinate without an external server.
-- The CLI can compute graph intelligence from local state with no network dependency.
-
-Relevant architecture:
-
-- `cmd/bw/` owns CLI command dispatch and output modes.
-- `internal/issue/` owns persisted issue state, listing, dependencies, ready/blocked calculations, comments, labels, parent/child relations, due/defer logic, and status transitions.
-- `internal/repo/` owns git context, sync, config, branch setup, and linked-worktree handling.
-- `internal/treefs/` provides the git-tree-backed filesystem abstraction.
-- `prompts/` contains dynamic prompt templates including `prime` and `start`.
-
-### 5.2 Existing graph primitives
-
-Beadwork already has enough graph structure for a useful MVP:
-
-- Issues have `BlockedBy` and `Blocks` fields.
-- Blocking edges are backed by marker files under `blocks/`.
-- `Store.LoadEdges()` can load forward and reverse dependency maps.
-- `Store.Ready()` and `Store.Blocked()` already compute actionable work.
-- `Link()` rejects self-blocking, dependency cycles, and child-to-ancestor blocking.
-- Parent/child issue trees are already modeled.
-- Scoped readiness exists via `ReadyScoped()`.
-- Closed-blocker and hidden-blocker display helpers already exist.
-
-This means graph intelligence can start as a thin analytical layer over existing issue data rather than a storage rewrite.
-
-### 5.3 Dynamic prompt surfaces
-
-Beadwork’s prompt surfaces are unusually important:
-
-- `bw prime` already renders live context for agents.
-- `bw start` already creates a work brief at claim time.
-- The command registry can be invoked from template helpers.
-- The pi extension can inject prime content into active sessions.
-
-This is a major advantage over a standalone viewer. Graph intelligence should not live only in a separate command; it should feed the prompts that shape agent behavior.
-
-### 5.4 Pi extension worker orchestration
-
-The pi-beadwork extension already supports:
-
-- Session engagement and scoping.
-- Delegated tmux workers.
-- Per-ticket worktrees.
-- Worker runtime state.
-- Validation/review/landing flows.
-- Deferred landing.
-- Bounded epic runs.
-- Worker inspection and status dashboards.
-
-The missing input is a graph-aware scheduler. `/bw run` currently has the machinery to launch and supervise workers; it needs a better model for choosing which workers to launch together.
+All without a SaaS backend, database server, external API key, or centralized task service.
 
 ---
 
-## 6. Source research: what beads_viewer contributes
+## 3. Why beadwork is uniquely positioned
 
-The highest-value `beads_viewer` ideas are agent-facing rather than UI-facing.
+### 3.1 Beadwork already has a typed intent log
 
-### 6.1 Robot-first command surface
+`beads_viewer` reconstructs history from `.beads/beads.jsonl` diffs. That is clever, but beadwork has a cleaner primitive: each mutation commits an intent to the `beadwork` branch.
 
-`beads_viewer` strongly separates the human TUI from safe agent output. Its agent workflow centers on robot commands such as:
+Examples include create, update, start, close, reopen, link, unlink, label, defer, undefer, comment, attach, config, and sync replay intents.
 
-- `--robot-triage`
-- `--robot-next`
-- `--robot-plan`
-- `--robot-insights`
-- `--robot-graph`
-- `--robot-alerts`
-- `--robot-suggest`
-- `--robot-history`
-- `--robot-diff`
-- label health / flow / attention commands
-
-The lesson for beadwork: provide explicit command contracts for agents instead of expecting agents to infer ranking from human list output.
-
-### 6.2 Deterministic recommendation output
-
-The `beads_viewer` triage contract includes:
-
-- metadata and versioning
-- data hash
-- graph status
-- quick reference counts
-- recommendations
-- quick wins
-- blockers to clear
-- project health
-- alerts
-- suggested commands
-- grouped recommendations by track or label
-
-The lesson for beadwork: `bw triage --json` should be self-describing, deterministic, and directly actionable.
-
-### 6.3 Graph analysis with progressive depth
-
-`beads_viewer` uses a two-phase model:
-
-- Phase 1: immediate topology, degree counts, density, simple graph structure.
-- Phase 2: heavier graph metrics such as PageRank, betweenness, HITS, eigenvector, cycle detection, and critical path, with status values like computed/approx/timeout/skipped.
-
-The lesson for beadwork: do not block the MVP on advanced centrality. Start with cheap deterministic metrics and design the JSON shape so heavier metrics can be added later.
-
-### 6.4 Explainable scoring
-
-`beads_viewer` impact scoring is not just a single number. It includes component breakdowns and reasons: priority, blocker ratio, staleness, urgency, risk, time-to-impact, and downstream unlocks.
-
-The lesson for beadwork: every recommendation should explain why it is recommended. This is essential for agent trust and operator override.
-
-### 6.5 Parallel execution tracks
-
-`beads_viewer --robot-plan` groups actionable issues into execution tracks using connected components over dependency relations. Tracks make parallel work safer by separating independent streams.
-
-The lesson for beadwork: `/bw run` should consume tracks so multiple workers do useful independent work instead of racing through a flat queue.
-
-### 6.6 Graph health and alerts
-
-`beads_viewer` treats cycles, stale work, blocked high-priority items, and priority misalignment as first-class signals.
-
-The lesson for beadwork: graph health should appear in `bw prime` and `/bw status`, because an agent should know when the plan is structurally unhealthy before it starts implementation.
-
----
-
-## 7. Adaptation map
-
-| beads_viewer idea | Beadwork-native adaptation | Why this fits beadwork |
-|---|---|---|
-| `bv --robot-triage` | `bw triage --json` and human `bw triage` | Agent-safe, deterministic recommendation contract |
-| `bv --robot-next` | `bw next --json` or `bw triage --top 1 --json` | Single top-pick workflow for agents |
-| `bv --robot-plan` | `bw plan --json` | Feed `/bw run` and worker orchestration |
-| Graph metrics | `internal/graph` over `issue.Store` | Reuses beadwork issue/dependency model |
-| Track grouping | Execution tracks scoped by parent/epic | Directly improves bounded epic runs |
-| Suggested commands | Output beadwork commands (`bw start`, `bw show`, `bw dep`) | Keeps CLI as mutation authority |
-| Graph health | Prime/status/start prompt sections | Uses beadwork’s dynamic prompt advantage |
-| Label health | Later `bw labels insights` or triage grouping | Useful for routing specialists/workers |
-| Time travel/diff | Later git-native graph diff using treefs/repo history | Beadwork’s branch model makes this natural |
-| Viewer dashboards | Pi extension graph/status panels | Avoids porting TUI while preserving operator value |
-
----
-
-## 8. Proposed architecture
-
-### 8.1 New internal package: `internal/graph`
-
-Add a small analytical package that depends on `internal/issue` types but does not mutate the store.
-
-Proposed files:
-
-```text
-internal/graph/
-  graph.go        // graph model and construction from issues + edges
-  metrics.go      // cheap deterministic metrics
-  score.go        // ranking and explanations
-  triage.go       // triage result assembly
-  plan.go         // execution track generation
-  alerts.go       // cycle/staleness/blocked-priority alerts
-  json.go         // versioned output DTOs if needed
-  *_test.go
-```
-
-The package should be intentionally boring at first. It should compute:
-
-- node count
-- edge count
-- ready count
-- blocked count
-- in-progress count
-- out-degree / in-degree
-- downstream unblock count
-- blocker depth
-- cycle detection
-- connected components
-- parent/subtree-aware track grouping
-- stale/overdue/deferred summary using existing issue helpers
-
-Advanced centrality can be added later behind explicit status fields.
-
-### 8.2 Graph construction
-
-Inputs:
-
-- all issues from `Store.List(Filter{All...})` or equivalent internal loading
-- `Store.LoadEdges()` for blocking dependencies
-- parent/child relationships from issue fields
-- current time from `Store.Now()` for due/defer/staleness logic
-- optional scope ID
-
-Important rule:
-
-> The initial graph should only treat blocking dependencies as scheduling dependencies.
-
-Parent/child relations are hierarchy/context, not blocking edges. They can shape scopes and tracks, but they should not be mixed into central scheduling metrics unless explicitly modeled.
-
-### 8.3 Core DTOs
-
-Sketch, not final schema:
-
-```go
-type TriageResult struct {
-    SchemaVersion string          `json:"schema_version"`
-    GeneratedAt   string          `json:"generated_at"`
-    Scope         *ScopeSummary   `json:"scope,omitempty"`
-    DataHash      string          `json:"data_hash"`
-    Status        AnalysisStatus  `json:"status"`
-    QuickRef      QuickRef        `json:"quick_ref"`
-    Recommendations []Recommendation `json:"recommendations"`
-    QuickWins     []Recommendation `json:"quick_wins"`
-    BlockersToClear []BlockerRecommendation `json:"blockers_to_clear"`
-    ProjectHealth ProjectHealth   `json:"project_health"`
-    Alerts        []Alert         `json:"alerts,omitempty"`
-    Commands      CommandHints    `json:"commands"`
-}
-```
-
-```go
-type Recommendation struct {
-    ID          string       `json:"id"`
-    Title       string       `json:"title"`
-    Priority    int          `json:"priority"`
-    Type        string       `json:"type"`
-    Status      string       `json:"status"`
-    Score       float64      `json:"score"`
-    ScoreParts  []ScorePart  `json:"score_parts"`
-    Reasons     []string     `json:"reasons"`
-    Unblocks    []string     `json:"unblocks,omitempty"`
-    BlockedBy   []string     `json:"blocked_by,omitempty"`
-    Parent      string       `json:"parent,omitempty"`
-    Labels      []string     `json:"labels,omitempty"`
-    Commands    []string     `json:"commands,omitempty"`
-}
-```
-
-```go
-type ExecutionPlan struct {
-    SchemaVersion string           `json:"schema_version"`
-    GeneratedAt   string           `json:"generated_at"`
-    Scope         *ScopeSummary    `json:"scope,omitempty"`
-    Summary       PlanSummary      `json:"summary"`
-    Tracks        []ExecutionTrack `json:"tracks"`
-    Alerts        []Alert          `json:"alerts,omitempty"`
-}
-
-type ExecutionTrack struct {
-    ID        string           `json:"id"`
-    RootIDs   []string         `json:"root_ids"`
-    Reason    string           `json:"reason"`
-    Items     []PlanItem       `json:"items"`
-    Unblocks  []string         `json:"unblocks,omitempty"`
-}
-```
-
-### 8.4 Data hash
-
-Use a deterministic hash over graph-relevant state:
-
-- issue IDs
-- status
-- priority
-- type
-- parent
-- labels
-- due/defer timestamps
-- blocked_by / blocks
-- updated_at
-
-This gives agents and tests a cheap way to detect whether triage results correspond to the graph they inspected.
-
-### 8.5 Analysis status
-
-Borrow the `beads_viewer` status idea but simplify:
-
-```json
-"status": {
-  "topology": "computed",
-  "cycles": "computed",
-  "centrality": "skipped",
-  "reason": "centrality metrics are not enabled in this version"
-}
-```
-
-This leaves room for future advanced metrics without pretending they exist in the MVP.
-
----
-
-## 9. Scoring model
-
-The MVP scoring model should be understandable and deterministic.
-
-Suggested initial score components:
-
-1. **Priority weight** — P0/P1 work should rank highly.
-2. **Actionability** — ready issues outrank blocked issues for next-work recommendations.
-3. **Downstream unlocks** — issues that unblock more open work get a boost.
-4. **Blocker depth** — clearing deep blockers gets a boost.
-5. **Overdue urgency** — overdue work gets a boost using existing due-date semantics.
-6. **Staleness** — stale open work gets a smaller boost or alert, not necessarily top rank.
-7. **Scope fit** — issues inside the current epic/scope outrank unrelated work when scoped.
-8. **In-progress penalty** — avoid assigning work already claimed unless explicitly requested.
-
-Example explanation:
-
-```text
-bw-42 is recommended because it is ready, priority 1, unblocks 3 open issues, and is on the critical path for epic bw-10.
-```
-
-The score should not be magical. Agent users need reasons more than mathematical purity.
-
-### 9.1 Avoid overfitting the score
-
-Do not implement a complex centrality-weighted ranking before the product has real usage data. Instead:
-
-- Make score parts visible.
-- Make weights easy to tune later.
-- Keep deterministic tie-breaking by priority, score, created time, then ID.
-- Add tests that lock expected ordering for representative graphs.
-
----
-
-## 10. CLI changes
-
-### 10.1 `bw triage`
-
-Purpose: answer “what matters now?”
-
-Examples:
-
-```bash
-bw triage
-bw triage --json
-bw triage --top 5 --json
-bw triage --scope bw-123 --json
-bw triage --include-blocked --json
-```
-
-Human output should be compact:
-
-```text
-Graph health: 18 open, 6 ready, 4 blocked, 0 cycles
-
-Top recommendations:
-1. bw-17  P1  ready  score 91  Unblocks 3 issues
-   Why: ready; high priority; clears downstream work for bw-8
-   Next: bw start bw-17
-
-2. bw-22  P2  ready  score 78  Quick win; no dependents
-   Why: ready; small leaf task; likely safe parallel worker
-   Next: bw start bw-22
-
-Blockers to clear:
-- bw-11 blocks bw-15, bw-18, bw-19
-```
-
-JSON output is the canonical agent contract.
-
-### 10.2 `bw next`
-
-Optional convenience alias for the top triage item:
-
-```bash
-bw next --json
-bw next --scope bw-123
-```
-
-This may be implemented as `bw triage --top 1` internally, or deferred if command surface growth is a concern.
-
-### 10.3 `bw plan`
-
-Purpose: answer “what can run in parallel?”
-
-Examples:
-
-```bash
-bw plan --json
-bw plan --scope bw-123 --json
-bw plan --workers 4
-```
-
-Output should group ready/actionable issues into execution tracks:
+This means beadwork can eventually expose an event stream like:
 
 ```json
 {
-  "summary": {
-    "ready": 6,
-    "tracks": 3,
-    "recommended_workers": 3
+  "event_type": "issue_started",
+  "issue_id": "bw-42",
+  "actor": "Alice / claude-opus",
+  "commit": "abc1234",
+  "timestamp": "2026-04-29T05:30:00Z",
+  "intent": "start bw-42 assignee=Alice"
+}
+```
+
+That stream can power:
+
+- lifecycle history,
+- velocity,
+- stale WIP detection,
+- author/agent attribution,
+- close-to-unblock analysis,
+- worker outcome summaries,
+- correlation with code commits,
+- compaction-resistant handoffs.
+
+This is more structurally powerful than `beads_viewer` because the event model is not reverse-engineered from JSONL line diffs; it is beadwork’s native history.
+
+### 3.2 `bw prime` is not a help command; it is a control-plane injection point
+
+`bw prime` already gives dynamic, live workflow context to agents. This is a huge differentiator.
+
+Most tools make agents ask the right command. Beadwork can instead make the right context appear at session start:
+
+- top graph risks,
+- highest-impact ready work,
+- active workers,
+- stale claims,
+- recent project movement,
+- unlanded worktrees,
+- blocked P0/P1 issues,
+- changed recommendation since last session,
+- exact next commands.
+
+A standalone viewer can show intelligence. `bw prime` can **shape agent behavior before the first tool call**.
+
+### 3.3 `bw start` is a natural worker brief compiler
+
+`bw start` currently claims work and prints useful issue context. With graph intelligence, it can become a just-in-time work packet:
+
+- why this issue is selected,
+- where it sits in the dependency graph,
+- what it unblocks,
+- what files are likely relevant,
+- which prior commits touched related issues,
+- active workers to avoid,
+- known validation expectations,
+- previous failed attempts,
+- close/landing checklist.
+
+This turns `start` into a **context compiler**, not merely a status transition.
+
+### 3.4 Pi already has the worker runtime
+
+The pi extension already supports delegated workers, ticket worktrees, tmux supervision, validation, review, deferred landing, cleanup, and bounded epic runs.
+
+The missing piece is not orchestration mechanics. The missing piece is **orchestration intelligence**.
+
+`/bw run` can become much more than “launch up to N ready tickets”:
+
+- launch across independent tracks,
+- avoid file-overlap conflicts,
+- prioritize critical path blockers,
+- run speculative downstream work safely,
+- delay landing based on graph risk,
+- rebase/refresh workers proactively,
+- emit operator notices when the graph changes.
+
+---
+
+## 4. What beads_viewer contributes beyond simple triage
+
+The source material in `/tmp/beads_viewer-research` contains several ideas that are more important than the TUI.
+
+### 4.1 Robot-first contracts
+
+`beads_viewer` repeatedly emphasizes agent-safe robot commands, including `--robot-triage`, `--robot-next`, `--robot-plan`, `--robot-insights`, `--robot-alerts`, `--robot-history`, `--robot-diff`, `--robot-suggest`, `--robot-graph`, label health/flow/attention, file relations, and more.
+
+The key insight is not the exact flags. The insight is that agents need **protocols**, not prose:
+
+- versioned output,
+- `data_hash`,
+- metric status,
+- generated timestamps,
+- command hints,
+- usage hints,
+- stable schemas,
+- partial-data warnings.
+
+Beadwork should adopt this as a contract style across new machine-facing commands.
+
+### 4.2 Graph metrics and progressive analysis
+
+`beads_viewer` uses a two-phase model:
+
+- fast topology and degree metrics first,
+- slower centrality/cycle metrics with timeout/status later.
+
+For beadwork, the lesson is architectural:
+
+- fast commands must stay fast,
+- analysis status must be explicit,
+- missing metrics must be represented as `skipped`, `timeout`, or `approx`,
+- agents must be able to degrade gracefully.
+
+### 4.3 Execution tracks
+
+`bv --robot-plan` groups work into tracks. This is directly relevant to pi workers.
+
+In beadwork, tracks should be more powerful because they can combine:
+
+- dependency components,
+- parent/epic scope,
+- labels/domains,
+- likely file overlap,
+- current worker claims,
+- landing state.
+
+### 4.4 Label overlays
+
+The `labels-view-feature-plan.md` treats labels as graph overlays rather than filters. That is a major idea.
+
+In beadwork, labels can become **domains**:
+
+- `frontend`, `backend`, `database`, `docs`, `testing`,
+- each with health, flow, velocity, staleness, active workers, blocked downstream impact,
+- each usable for worker routing.
+
+This allows pi to answer questions like:
+
+- “Which domain is starving the release?”
+- “Which label needs the next specialist worker?”
+- “Which label is producing blockers for the others?”
+
+### 4.5 History and code correlation
+
+The `bead-history-feature-plan.md` identifies a powerful correlation loop:
+
+- task lifecycle event → git commit → code files → future task/file relevance.
+
+Beadwork can do this better because issue history already lives in git, and pi worker landing can annotate the exact branch/head/validation result.
+
+This unlocks:
+
+- `bw history <issue>` as causal timeline,
+- `bw file-beads <path>`,
+- `bw related <issue>` based on co-changed files,
+- orphan commit detection,
+- conflict prediction before worker launch,
+- better worker briefs.
+
+### 4.6 Agent brief bundles
+
+`beads_viewer` includes the idea of agent briefs. Beadwork should elevate this into a first-class primitive:
+
+```bash
+bw brief --for planner
+bw brief --for worker bw-42
+bw brief --for reviewer bw-42
+bw brief --for orchestrator --scope bw-epic
+```
+
+The brief is not just issue text. It is a token-budgeted bundle of graph, history, file, worker, and validation context.
+
+### 4.7 Alerts and drift
+
+`beads_viewer` has robot alerts, drift, diff, baselines, and proactive warnings.
+
+Beadwork’s git-native model makes this especially compelling:
+
+```bash
+bw drift --since HEAD~20 --json
+bw alerts --scope bw-epic --json
+bw diff-graph --since yesterday --json
+```
+
+This can tell an agent what changed since the last session or since an epic plan was adopted.
+
+### 4.8 Recipes and saved operational views
+
+`beads_viewer` has recipes like actionable, high-impact, stale, blocked, bottlenecks, triage.
+
+Beadwork should support repo-native recipes:
+
+```yaml
+# .beadwork/recipes/release-cut.yaml, or stored on the beadwork branch
+name: release-cut
+scope: bw-release
+filters:
+  status: [open, in_progress]
+  labels: [release]
+ranking:
+  - overdue
+  - blocks
+  - priority
+warnings:
+  - cycles
+  - stale-in-progress
+  - orphan-commits
+```
+
+Then:
+
+```bash
+bw triage --recipe release-cut --json
+bw plan --recipe safe-parallel --workers 6 --json
+```
+
+This turns workflows into reusable, inspectable operational policy.
+
+### 4.9 Semantic and hybrid search
+
+The semantic-search plan is intentionally optional, but the hybrid ranking model matters:
+
+- text relevance,
+- graph impact,
+- priority,
+- recency,
+- status,
+- labels,
+- code correlation.
+
+Beadwork should eventually add local-first `bw search` that works across title, description, comments, history, changed files, and related issues.
+
+This matters because agents often need to ask:
+
+> “What prior work is relevant to auth callbacks?”
+
+The answer should not require reading the entire issue list.
+
+### 4.10 Agent-friendliness as a measurable product quality
+
+The agent-friendliness report rates `beads_viewer` highly because it has structured outputs, usage hints, robot commands, actionable commands, and documentation.
+
+Beadwork should adopt that bar and surpass it:
+
+- `bw schema` for every robot contract,
+- `bw robot-docs` for machine-readable command discovery,
+- `--format json|toon|markdown`,
+- embedded usage hints in JSON,
+- stable examples in golden tests,
+- prompt-safe compact summaries.
+
+---
+
+## 5. The proposed system: seven disruptive pillars
+
+### Pillar 1 — Swarm Intelligence Core
+
+#### What it is
+
+A read-only analysis layer over beadwork issues, dependencies, labels, parents, due/defer state, history, worker state, and later code correlation.
+
+Initial commands:
+
+```bash
+bw triage --json
+bw next --json
+bw plan --json
+bw partition --agents 5 --json
+bw validate-plan --scope bw-epic --json
+bw alerts --json
+```
+
+#### Why it is disruptive
+
+Most issue trackers answer “what exists?” Beadwork should answer:
+
+- what matters now,
+- what is safe to parallelize,
+- what blocks the most value,
+- what plan smells wrong,
+- what should the next worker do,
+- when should the operator intervene.
+
+This turns a task tracker into an execution optimizer.
+
+#### Beadwork-native design
+
+Start with explicit blocking dependencies only for scheduling. Treat parent/child as scope and structure. Treat labels as domains. Treat issue status as worker availability. Later add file and history dimensions.
+
+Core DTO shape:
+
+```json
+{
+  "schema_version": "bw.triage.v1",
+  "generated_at": "2026-04-29T06:00:00Z",
+  "repo": { "root": "/repo", "branch": "main" },
+  "scope": { "id": "bw-epic", "title": "Release" },
+  "data_hash": "sha256:...",
+  "as_of": { "beadwork_ref": "refs/heads/beadwork", "commit": "abc1234" },
+  "status": {
+    "topology": "computed",
+    "cycles": "computed",
+    "centrality": "skipped",
+    "history": "partial",
+    "file_correlation": "skipped"
   },
-  "tracks": [
-    {
-      "id": "track-1",
-      "reason": "Authentication epic dependency component",
-      "items": [
-        { "id": "bw-17", "score": 91, "unblocks": ["bw-31", "bw-32"] }
-      ]
-    }
+  "quick_ref": {
+    "open": 42,
+    "ready": 9,
+    "blocked": 12,
+    "in_progress": 4,
+    "tracks": 5,
+    "cycles": 0
+  },
+  "recommendations": [],
+  "quick_wins": [],
+  "blockers_to_clear": [],
+  "tracks": [],
+  "alerts": [],
+  "commands": {},
+  "usage_hints": []
+}
+```
+
+### Pillar 2 — Causal Work Memory
+
+#### What it is
+
+A beadwork-native event and correlation layer:
+
+- issue lifecycle events from beadwork branch commits,
+- code commits correlated by issue IDs, co-commits, temporal author windows, and pi landing metadata,
+- file/index summaries showing which issues touched which code,
+- confidence-scored explanations.
+
+Potential commands:
+
+```bash
+bw events --json
+bw history bw-42 --causal --json
+bw correlate --issue bw-42 --json
+bw correlate --commit abc1234 --json
+bw file-beads internal/issue/store.go --json
+bw orphans --json
+```
+
+#### Why it is disruptive
+
+Agents lose context. Git does not. Beadwork can convert git history into durable project memory.
+
+With causal memory, an agent can ask:
+
+- “What code did this issue change?”
+- “Which issue explains this commit?”
+- “What previous attempt failed validation?”
+- “Which files does this epic usually touch?”
+- “Which active workers are likely to collide?”
+
+This goes beyond `beads_viewer`: beadwork has exact issue intent commits and pi has exact worker landing metadata.
+
+#### Data model sketch
+
+```go
+type WorkEvent struct {
+    EventID     string `json:"event_id"`
+    Type        string `json:"type"`
+    IssueID     string `json:"issue_id,omitempty"`
+    Actor       string `json:"actor,omitempty"`
+    Commit      string `json:"commit"`
+    Timestamp   string `json:"timestamp"`
+    Intent      string `json:"intent"`
+    Source      string `json:"source"` // beadwork-intent | pi-worker | correlation
+}
+
+type CodeCorrelation struct {
+    IssueID     string   `json:"issue_id"`
+    Commit      string   `json:"commit"`
+    Files       []string `json:"files"`
+    Method      string   `json:"method"` // explicit-id | co-commit | landing | temporal-author | path-hint
+    Confidence  float64  `json:"confidence"`
+    Reason      string   `json:"reason"`
+}
+```
+
+### Pillar 3 — Context Compiler
+
+#### What it is
+
+A set of role-specific, token-budgeted context products built on the same analysis model:
+
+```bash
+bw prime --for planner
+bw prime --for worker --scope bw-epic
+bw start bw-42 --brief graph,history,files
+bw brief --for worker bw-42
+bw brief --for reviewer bw-42
+bw brief --for orchestrator --scope bw-epic
+```
+
+The pi extension uses these when launching workers and reviewers.
+
+#### Why it is disruptive
+
+Agents waste turns rediscovering context. A context compiler gives each agent exactly the context it needs for its role.
+
+A planner needs:
+
+- graph health,
+- open questions,
+- missing dependencies,
+- high-risk labels,
+- suggested decomposition.
+
+A worker needs:
+
+- issue details,
+- relevant prior comments,
+- likely files,
+- blockers/dependents,
+- validation commands,
+- close criteria.
+
+A reviewer needs:
+
+- ticket intent,
+- changed files,
+- correlated prior issues,
+- validation output,
+- scope boundary.
+
+An orchestrator needs:
+
+- worker states,
+- track occupancy,
+- landing risks,
+- next launch candidates,
+- attention items.
+
+#### Example worker brief
+
+```markdown
+# Worker brief: bw-42 Fix auth callback race
+
+## Why this was selected
+- Rank #1 in scope bw-auth; ready; P1; unblocks bw-51 and bw-52.
+- On critical path for release track `auth-flow`.
+
+## Graph context
+- Direct dependents: bw-51, bw-52
+- Transitive downstream: 5 open issues
+- Sibling ready work: bw-44, bw-45
+- Avoid overlap: worker bw-39 is active in `internal/auth/session.go`
+
+## Code memory
+- Related prior issue bw-17 touched `internal/auth/callback.go` and `cmd/bw/start.go`.
+- Commit abc1234 closed bw-17 with similar validation failure: race under concurrent callback.
+
+## Expected validation
+- go test ./...
+- targeted: go test ./internal/auth -run Callback
+
+## Close guidance
+- On close, verify bw-51 becomes ready.
+- Suggested follow-up: `bw ready --ranked --scope bw-auth`.
+```
+
+### Pillar 4 — Conflict-Aware Orchestration
+
+#### What it is
+
+A smarter pi `/bw run` that schedules by graph track, file-risk, worker state, and landing risk.
+
+Potential flow:
+
+1. `bw plan --scope <epic> --workers N --json` returns tracks and candidates.
+2. Pi asks `bw conflict-risk --candidates ... --json` or consumes risk embedded in plan.
+3. Pi launches workers across tracks, avoiding likely file overlap.
+4. Worker handoffs include track/file context.
+5. Completion triggers impact-aware landing order.
+6. Active workers receive refresh/rebase/remediation notices when graph/code state changes.
+
+#### Why it is disruptive
+
+Most multi-agent systems parallelize by optimism: launch N agents and hope merges work.
+
+Beadwork can parallelize by **graph and code topology**:
+
+- dependency independence,
+- label/domain separation,
+- likely file separation,
+- worktree divergence,
+- previous co-change clusters,
+- current worker reservations.
+
+This can materially increase throughput while reducing merge conflicts.
+
+#### New commands/tools
+
+```bash
+bw partition --scope bw-epic --agents 6 --json
+bw conflict-risk bw-42 bw-43 bw-44 --json
+bw workers --json                 # optionally in CLI or pi-only tool
+```
+
+Pi tools:
+
+- `beadwork_plan`
+- `beadwork_partition`
+- `beadwork_conflict_risk`
+- `beadwork_worker_brief`
+- `beadwork_graph_alerts`
+
+### Pillar 5 — Speculative Execution
+
+#### What it is
+
+Allow pi to launch **speculative workers** for blocked downstream tasks when their blocker is already active and likely to land soon.
+
+Example:
+
+- bw-10 is active and blocks bw-11.
+- bw-11 is mostly independent except for an API shape from bw-10.
+- Pi launches bw-11 in a speculative worktree based on bw-10’s branch or expected interface.
+- bw-11 cannot land until bw-10 lands.
+- If bw-10 changes direction, bw-11 is refreshed, remediated, or discarded.
+
+#### Why it is disruptive
+
+This is branch prediction for software work.
+
+Dependency graphs often serialize work unnecessarily because blocked tasks cannot start until blockers are closed. With worktrees and explicit landing gates, beadwork/pi can safely do controlled speculation.
+
+This should be an advanced, opt-in mode:
+
+```bash
+/bw run bw-epic --workers 6 --speculative 2
+```
+
+Safety rules:
+
+- speculative workers never auto-land,
+- must declare assumption points,
+- must rebase after blocker lands,
+- must be killed if blocker fails validation or changes scope,
+- must be clearly marked in `/bw workers`.
+
+This is high ambition, not MVP, but it is exactly the kind of innovation pi worktrees make possible.
+
+### Pillar 6 — Plan CI and Graph Repair
+
+#### What it is
+
+Treat plans as artifacts that can fail validation.
+
+Commands:
+
+```bash
+bw validate-plan --scope bw-epic
+bw dep cycles --json
+bw suggest --type dependency --json
+bw repair-plan --preview --scope bw-epic
+```
+
+Pi `/bw adopt` should run plan validation after converting markdown into beadwork issues.
+
+Checks:
+
+- dependency cycles,
+- orphan high-priority tasks,
+- P0/P1 blocked by low-priority work,
+- giant “god” epics with no internal edges,
+- tasks with vague acceptance criteria,
+- labels with unhealthy flow,
+- over-deep critical path,
+- duplicated titles/descriptions,
+- stale in-progress work,
+- recently changed files with no matching issue,
+- closed issues whose dependents did not become ready as expected.
+
+#### Why it is disruptive
+
+Agents often create task graphs that look plausible but execute poorly. Plan CI would catch broken decomposition before a swarm burns hours.
+
+This makes beadwork the place where agent-generated plans become operationally trustworthy.
+
+### Pillar 7 — Adaptive Feedback Loop
+
+#### What it is
+
+Record which recommendations were accepted, ignored, successful, failed validation, required remediation, conflicted on landing, or generated follow-up work.
+
+Potential commands:
+
+```bash
+bw feedback accept --recommendation rec-123 --issue bw-42
+bw feedback ignore --recommendation rec-123 --reason "wrong domain"
+bw outcomes --json
+bw score explain bw-42
+```
+
+Pi can write feedback automatically:
+
+- worker launched from recommendation,
+- worker closed ticket,
+- validation passed/failed,
+- review requested changes,
+- landing conflicted,
+- remediation attempts used,
+- operator manually landed or canceled.
+
+#### Why it is disruptive
+
+Ranking systems usually stay static. Beadwork can learn locally from its own execution history while staying transparent and git-native.
+
+This does **not** require opaque ML. Start with explainable outcome statistics:
+
+- tasks in label `testing` often validate quickly,
+- tasks touching `internal/repo` frequently conflict,
+- worker model X has high remediation rate on docs,
+- P2 quick wins often unblock no one and should not outrank P1 blockers,
+- issues with no acceptance criteria have higher reopen rate.
+
+Then feed those signals into future triage as visible score parts.
+
+---
+
+## 6. New command surface: from CLI to agent protocol
+
+### 6.1 Command tiers
+
+#### Tier A — MVP graph intelligence
+
+```bash
+bw triage [--scope ID] [--top N] [--include-blocked] [--json]
+bw plan [--scope ID] [--workers N] [--json]
+bw ready --ranked [--json]
+bw dep cycles [--json]
+```
+
+#### Tier B — control-plane operations
+
+```bash
+bw partition --scope ID --agents N --json
+bw validate-plan --scope ID --json
+bw alerts [--scope ID] [--json]
+bw drift --since REF --json
+bw brief --for worker|planner|reviewer|orchestrator [ID] [--json|--markdown]
+```
+
+#### Tier C — causal memory and code graph
+
+```bash
+bw events --json
+bw history ID --causal --json
+bw correlate --issue ID --json
+bw correlate --commit SHA --json
+bw file-beads PATH --json
+bw related ID --json
+bw orphans --json
+```
+
+#### Tier D — domains, recipes, search, and feedback
+
+```bash
+bw label health --json
+bw label flow --json
+bw label attention --json
+bw recipe list
+bw triage --recipe high-impact --json
+bw search "auth callback race" --json
+bw feedback accept|ignore ...
+bw outcomes --json
+```
+
+### 6.2 Standard robot envelope
+
+Every new machine-facing command should use a shared envelope:
+
+```json
+{
+  "schema_version": "bw.<command>.v1",
+  "generated_at": "2026-04-29T06:00:00Z",
+  "repo": {
+    "root": "/repo",
+    "worktree": false,
+    "branch": "main",
+    "dirty": false
+  },
+  "beadwork": {
+    "ref": "refs/heads/beadwork",
+    "commit": "abc1234",
+    "prefix": "bw"
+  },
+  "data_hash": "sha256:...",
+  "status": {},
+  "warnings": [],
+  "data": {},
+  "commands": {},
+  "usage_hints": [],
+  "errors": []
+}
+```
+
+This is one of the most important architecture decisions. It turns beadwork into a stable local protocol for agents.
+
+### 6.3 Formats
+
+Support should be staged:
+
+1. `--json` for canonical output.
+2. `--format json` as explicit synonym.
+3. `--schema` or `bw schema <command>` for JSON Schema.
+4. Optional `--format toon` later for token efficiency.
+5. Markdown/human output stays concise.
+
+---
+
+## 7. Graph and scoring model
+
+### 7.1 Graph layers
+
+Beadwork should not treat “the graph” as one thing. It should define layers:
+
+1. **Scheduling graph** — blocking dependencies only.
+2. **Scope graph** — parent/child hierarchy.
+3. **Domain graph** — labels and cross-label flows.
+4. **Code graph** — issue↔commit↔file correlations.
+5. **Worker graph** — active workers, worktrees, leases, landing states.
+6. **Time graph** — events, drift, velocity, stale WIP.
+7. **Semantic graph** — optional relatedness via text/search/embeddings later.
+
+The MVP uses layers 1–3. The disruptive product emerges when layers 4–6 are added.
+
+### 7.2 Score parts
+
+A recommendation should never be a black box. Suggested score parts:
+
+- priority,
+- readiness,
+- downstream unlocks,
+- transitive blocker depth,
+- critical path position,
+- overdue urgency,
+- stale WIP pressure,
+- domain health / label attention,
+- recent movement relevance,
+- file conflict risk,
+- worker availability,
+- confidence level,
+- historical outcome adjustment.
+
+Example:
+
+```json
+{
+  "id": "bw-42",
+  "score": 91.4,
+  "action": "start",
+  "confidence": 0.86,
+  "score_parts": [
+    { "name": "priority", "value": 22, "reason": "P1 issue" },
+    { "name": "readiness", "value": 20, "reason": "no unresolved blockers" },
+    { "name": "unblocks", "value": 18, "reason": "unblocks 3 direct / 7 transitive issues" },
+    { "name": "domain_health", "value": 10, "reason": "database label attention is critical" },
+    { "name": "conflict_risk", "value": -4, "reason": "possible overlap with worker bw-39" }
+  ],
+  "reasons": [
+    "ready P1 work",
+    "highest downstream unlock in scope",
+    "on critical path for release",
+    "database domain is currently the release bottleneck"
   ]
 }
 ```
 
-### 10.4 `bw ready --ranked`
+### 7.3 Ranking modes
 
-Keep `bw ready` familiar, but add ranking as an opt-in mode:
+Different operators need different policies:
 
-```bash
-bw ready --ranked
-bw ready --ranked --json
-```
+- `actionable` — ready work only.
+- `unblock` — blocked items ranked by blocker to clear.
+- `critical-path` — longest dependency chain first.
+- `safe-parallel` — minimize file/track overlap.
+- `recent` — emphasize recent commits and active context.
+- `human-needed` — ambiguous/stale/high-risk issues.
+- `review` — items awaiting review/landing.
 
-This prevents breaking users who expect the current grouped ready view.
-
-### 10.5 `bw dep cycles`
-
-Cycle detection deserves a direct command because cycles are structural execution hazards.
-
-```bash
-bw dep cycles
-bw dep cycles --json
-```
-
-If cycles exist, `bw prime` should mention them prominently.
-
-### 10.6 `bw dep graph`
-
-Later, expose graph export:
-
-```bash
-bw dep graph --json
-bw dep graph --mermaid
-bw dep graph --dot
-bw dep graph --scope bw-123 --depth 2
-```
-
-This is useful for docs, dashboards, and future pi visualization, but should not block the MVP.
+This is where recipes become powerful.
 
 ---
 
-## 11. Prompt/template integration
+## 8. Pi-beadwork-extension: from dashboard to operator console
 
-This is where beadwork can become more valuable than a standalone viewer.
+### 8.1 New model tools
 
-### 11.1 `bw prime`
-
-Add a compact “Graph intelligence” section:
-
-```markdown
-## Graph intelligence
-
-- Ready: 6; blocked: 4; in progress: 2; cycles: 0
-- Top next: bw-17 — P1, ready, unblocks 3 issues
-- Highest leverage blocker: bw-11 — blocks 3 open issues
-- Parallel tracks available: 3
-- Suggested command: bw triage --json
-```
-
-If unhealthy:
-
-```markdown
-## Graph warnings
-
-- Dependency cycle detected: bw-12 -> bw-19 -> bw-12
-- P0 issue bw-8 is blocked by bw-11
-- 5 open issues are stale by more than 14 days
-```
-
-The content must be short. `prime` should guide the agent, not flood context.
-
-### 11.2 `bw start`
-
-Add a “Why this issue matters” work brief after claiming:
-
-```markdown
-## Graph context
-
-- Rank: #1 of 6 ready issues in current scope
-- Reason: ready; P1; unblocks bw-31 and bw-32
-- Downstream: 2 direct, 5 transitive
-- Related track: track-1 Authentication dependency stream
-- Watch out: closing this should newly unblock bw-31
-```
-
-Also add post-close hints:
-
-```text
-After closing, run: bw ready --ranked --scope bw-10
-```
-
-### 11.3 `bw close`
-
-Beadwork already has `NewlyUnblocked`. Use this more aggressively:
-
-```text
-Closed bw-17.
-Newly unblocked:
-- bw-31 P1 Finish auth callback
-- bw-32 P2 Add auth regression test
-Suggested next: bw start bw-31
-```
-
-This closes the agent flywheel: work completion immediately feeds next-work selection.
-
----
-
-## 12. Pi extension integration
-
-### 12.1 New model tools
-
-Expose graph intelligence to agents:
+Expose the control-plane surface:
 
 - `beadwork_triage`
-- `beadwork_next`
 - `beadwork_plan`
-- `beadwork_graph_health`
-- optionally `beadwork_dep_cycles`
+- `beadwork_partition`
+- `beadwork_alerts`
+- `beadwork_brief`
+- `beadwork_history`
+- `beadwork_file_beads`
+- `beadwork_conflict_risk`
+- `beadwork_label_health`
+- `beadwork_drift`
 
-These tools should shell out through the existing adapter, parse JSON, and return typed objects.
+These should call `bw` structured outputs through the existing adapter layer.
 
-### 12.2 `/bw run` track-aware scheduling
+### 8.2 Track-aware bounded runs
 
-Current bounded epic orchestration can become much smarter without changing its worker lifecycle.
+`/bw run <epic>` should consume `bw plan --json` and schedule by:
 
-Proposed behavior:
+1. graph track,
+2. priority and unblock value,
+3. label/domain health,
+4. active worker count per track,
+5. predicted file overlap,
+6. landing/validation risk,
+7. operator-specified mode.
 
-1. Call `bw plan --scope <epic> --json`.
-2. Select at most one active item per execution track per cycle unless configured otherwise.
-3. Prefer high-score items that unblock downstream work.
-4. Avoid launching multiple workers in the same dependency component unless they are independent ready leaves and worker capacity remains.
-5. Stop early on graph health hazards such as dependency cycles in scope.
+Modes:
 
-This creates safer parallelism.
+```bash
+/bw run bw-epic --mode safe          # avoid overlap, conservative
+/bw run bw-epic --mode throughput    # maximize workers with acceptable risk
+/bw run bw-epic --mode unblock       # focus highest-impact blockers
+/bw run bw-epic --mode speculative   # allow controlled downstream speculation
+```
 
-### 12.3 Worker handoff enrichment
+### 8.3 Worker handoff as compiled context
 
-When `launchTicketWorker` writes `handoff.txt`, include graph context:
+`launchTicketWorker` already writes handoff files. Replace ad hoc context with `bw brief --for worker <ticket>` output.
 
-- why this ticket was selected
-- current rank and score
-- blockers/dependents
-- parent epic
-- track ID
-- what closing it may unblock
-- suggested follow-up command
+The handoff should include:
 
-This uses the extension’s existing handoff machinery rather than inventing a new worker protocol.
+- selection reason,
+- graph rank and track,
+- scope boundary,
+- relevant comments/attachments,
+- likely files and file-risk warnings,
+- active nearby workers,
+- validation commands,
+- close checklist,
+- landing policy,
+- what to comment back if blocked.
 
-### 12.4 Dashboard additions
+### 8.4 Operator dashboard surfaces
 
-Avoid porting the `beads_viewer` TUI. Instead, add small graph-native surfaces to the existing pi dashboard:
+Do **not** port the `beads_viewer` TUI. Instead add compact operator surfaces:
 
-- compact graph health line in status
-- “Top next” panel
-- “Blockers to clear” panel
-- execution tracks view for scoped epics
-- cycle warning banner
-- worker tab grouped by track
+- **Control line:** ready / blocked / tracks / cycles / active workers / held workers.
+- **Top next:** the current highest-value next actions.
+- **Track board:** each execution track with active/ready/blocked/held state.
+- **Domain health:** label chips showing attention and velocity.
+- **Conflict map:** active workers and predicted overlapping files.
+- **Drift alerts:** what changed since last turn/session.
+- **Landing queue:** completed workers ordered by impact/risk.
 
-The dashboard should remain an operator console, not become a full graph visualization app.
+### 8.5 Proactive notices
 
-### 12.5 Background notices
+The extension already de-duplicates worker notices. Add graph-level notices when material changes occur:
 
-The extension already de-duplicates worker notices. Add graph-level notices only when state changes materially:
-
-- new dependency cycle introduced
-- P0/P1 issue becomes blocked
-- worker closure unblocks high-impact task
-- epic has ready tracks but no active workers
-- all ready work exhausted; project is blocked
+- new cycle introduced,
+- P0/P1 becomes blocked,
+- a worker close unlocks a high-impact track,
+- a track has ready work but no active worker,
+- active workers are likely to collide,
+- worker output invalidates a speculative downstream worker,
+- plan drift exceeds threshold,
+- stale in-progress issue crosses threshold.
 
 ---
 
-## 13. Recent-commit workflow adaptation
+## 9. Recent-commit workflow: first-class design target
 
-The user’s workflow preference is not just “rank my backlog.” It is closer to:
+The user’s actual workflow is not just “rank my backlog.” It is closer to:
 
 1. inspect recent repo movement,
-2. infer where agent energy should go next,
-3. build or adjust the task graph,
-4. keep many high-priority workers busy,
-5. use prompt context to keep agents aligned.
+2. infer what the graph should become,
+3. set up high-leverage work items,
+4. launch multiple agents,
+5. keep agents aligned through dynamic prompts,
+6. land safely,
+7. repeat after compaction or session handoff.
 
-Beadwork can support this better than `beads_viewer` because beadwork already lives in git.
+Beadwork should explicitly support that.
 
-Future direction after MVP:
-
-### 13.1 Commit-to-issue correlation
-
-Add optional correlation between recent commits and issue graph:
-
-- commits that mention issue IDs
-- files changed by issue-linked commits
-- issues whose likely files changed recently
-- closed issues with landing metadata from pi workers
-- branches/worktrees associated with tickets
-
-Potential command:
+### 9.1 Recent movement commands
 
 ```bash
 bw recent --json
+bw drift --since HEAD~20 --json
 bw triage --recent HEAD~20..HEAD --json
+bw suggest --from-recent --json
 ```
 
-### 13.2 Graph repair suggestions
+Potential output:
 
-Use recent commits and issue state to suggest graph adjustments:
+- commits mentioning beadwork IDs,
+- commits with no issue reference,
+- files changed without matching open/closed issues,
+- issues whose likely files changed recently,
+- stale issues in recently active areas,
+- suggested dependencies from code movement,
+- suggested labels from changed paths.
 
-- “This closed commit mentions bw-17, but bw-17 is still open.”
-- “These 3 open tasks reference files heavily changed this week.”
-- “This P1 issue has no dependencies but appears downstream of bw-12 based on recent code ownership.”
+### 9.2 Git-native graph repair
 
-This should start as suggestions, not automatic mutation.
-
-### 13.3 Agent flywheel loop
-
-An ideal future loop:
+Examples:
 
 ```text
-bw prime
-  -> graph health + recent movement + top tracks
-bw plan --scope epic --json
-  -> parallel worker launch plan
-/bw run epic
-  -> track-aware workers
-worker closes issue
-  -> landing + validation + graph update
-bw close output
-  -> newly unblocked recommendations
-next bw prime
-  -> updated graph and recent changes
+Suggestion: commit 9abc123 changed internal/repo/sync.go but no beadwork issue references it.
+Action: create follow-up issue or correlate with bw-51.
+
+Suggestion: bw-74 is open and mentions sync replay; recent commits changed sync replay files.
+Action: inspect whether bw-74 is already done or should depend on bw-51.
+
+Suggestion: three active workers are likely to touch cmd/bw/command.go.
+Action: serialize them or launch only one in that conflict cluster.
 ```
 
-This is the workflow where beadwork can become more powerful than both a plain issue tracker and a standalone viewer.
+### 9.3 Why this beats standalone beads_viewer for this workflow
+
+`beads_viewer` can rank `.beads/beads.jsonl`. Beadwork can rank **work in relation to the actual git repo and active pi workers**.
+
+That is the user’s gap: not merely “what does the graph say,” but “what should the swarm do next given recent commits, worker state, and graph health?”
 
 ---
 
-## 14. Implementation sequence
+## 10. Data model and storage
 
-### Phase 0 — Lock output contracts
+### 10.1 Keep issue schema stable initially
+
+Do not overload the issue JSON schema for every new analysis field. Most intelligence should be derived.
+
+Initial derived data can be computed on demand from:
+
+- issue files,
+- block marker files,
+- parent relationships,
+- comments,
+- beadwork branch history,
+- git log of main branch,
+- pi worker registry.
+
+### 10.2 Add optional event/feedback artifacts later
+
+If derived computation becomes expensive or feedback needs persistence, add explicit artifacts on the beadwork branch:
+
+```text
+events/
+  <event-id>.json
+correlations/
+  issue/<id>.json
+  commit/<sha>.json
+feedback/
+  recommendations/<id>.json
+snapshots/
+  graph/<timestamp>.json
+recipes/
+  <name>.yaml
+```
+
+These should be append-friendly and merge-friendly.
+
+### 10.3 Worker state bridge
+
+The pi extension currently stores worker runtime state outside the beadwork branch. That is appropriate for volatile runtime, but selected worker outcomes should become durable beadwork context:
+
+- worker launched,
+- model/provider,
+- branch/worktree,
+- validation result,
+- review result,
+- landing result,
+- files changed summary,
+- remediation count,
+- final status.
+
+This can be stored as typed comments initially to avoid schema churn:
+
+```text
+worker-result: worker=abc ticket=bw-42 status=landed validation=passed head=1234 files=7 remediation=0
+```
+
+Later it can become structured event metadata.
+
+---
+
+## 11. Recipes: operationalizing Jeffery-style workflows
+
+Recipes should be first-class because they let users encode how they actually run agent swarms.
+
+Examples:
+
+### 11.1 `safe-parallel`
+
+Goal: maximize concurrency with low merge risk.
+
+Policy:
+
+- one worker per dependency track,
+- avoid same predicted file cluster,
+- avoid in-progress labels with low health,
+- prefer ready P1/P2 tasks,
+- exclude tasks with vague acceptance criteria.
+
+### 11.2 `critical-unblock`
+
+Goal: clear the highest-impact blockers.
+
+Policy:
+
+- include blocked issues only as “blocker-to-clear” recommendations,
+- score by transitive downstream count and priority of dependents,
+- highlight one blocker per critical path.
+
+### 11.3 `recent-commit-followup`
+
+Goal: convert recent movement into graph updates.
+
+Policy:
+
+- find orphan commits,
+- find open issues whose files changed,
+- suggest dependency/close/comment actions,
+- propose follow-up tasks where code changed without issue coverage.
+
+### 11.4 `release-cut`
+
+Goal: prepare a release branch.
+
+Policy:
+
+- focus release-labeled work,
+- warn on cycles and P0 blockers,
+- include validation/landing status,
+- require no stale in-progress issues,
+- show forecast/risk.
+
+Recipes can be stored in repo config, user config, or on the beadwork branch. They should be visible to both CLI and pi dashboard.
+
+---
+
+## 12. Implementation architecture
+
+### 12.1 New Go packages
+
+Suggested package boundaries:
+
+```text
+internal/graph/
+  graph.go          // scheduling graph from issues + blocks
+  scope.go          // parent/subtree handling
+  metrics.go        // degree, topo, depth, connected components, cycles
+  score.go          // explainable score parts
+  triage.go         // recommendation assembly
+  plan.go           // execution tracks and partitioning
+  labels.go         // label/domain health and flow
+  alerts.go         // graph health warnings
+  envelope.go       // robot output envelope helpers
+
+internal/events/
+  intents.go        // parse beadwork branch commit intents into typed events
+  history.go        // issue lifecycle timelines
+  snapshots.go      // optional graph snapshots later
+
+internal/correlation/
+  commits.go        // explicit ID / co-commit / temporal correlation
+  files.go          // issue↔file indexes
+  confidence.go     // transparent confidence scoring
+
+internal/brief/
+  compiler.go       // role-specific context assembly
+  budget.go         // token/line budget enforcement
+
+internal/recipe/
+  recipe.go         // saved operational policies
+  eval.go           // apply filters/scoring modes
+```
+
+The first PR does **not** need all of these. But naming the architecture now prevents `internal/graph` from becoming a dumping ground.
+
+### 12.2 Keep analysis read-only
+
+All analysis packages should be read-only by default. Mutations should remain in existing issue/store methods and commands.
+
+Commands like `bw suggest` and `bw repair-plan` should preview by default and require explicit apply flags later.
+
+### 12.3 Performance posture
+
+Adopt `beads_viewer`’s performance lesson:
+
+- phase 1: cheap deterministic metrics,
+- phase 2: optional expensive metrics,
+- explicit metric status,
+- no slow analysis in default `bw ready`,
+- golden tests for output stability,
+- benchmark large graphs.
+
+### 12.4 Output determinism
+
+Every robot output must be deterministic:
+
+- stable map iteration,
+- stable tie-breaking,
+- stable timestamps in tests via `BW_CLOCK`,
+- stable `data_hash`,
+- explicit schema versions.
+
+---
+
+## 13. Implementation sequence
+
+### Phase 0 — Contract and examples
 
 Deliverables:
 
-- Draft JSON schema examples for `triage` and `plan`.
-- Add golden fixtures representing small dependency graphs.
-- Decide command names: `triage`, `plan`, optional `next`.
+- JSON envelope standard.
+- Example outputs for `triage`, `plan`, `brief`, `alerts`.
+- Golden fixtures for chain, diamond, independent tracks, cycle, scoped epic, label-flow.
+- Decision on schema naming.
 
-Acceptance criteria:
+Acceptance:
 
-- Maintainers agree on stable fields for MVP.
-- Existing commands remain unchanged.
+- Maintainers can review the protocol before code spreads.
+- Examples are good enough for pi adapter tests.
 
-### Phase 1 — Internal graph MVP
-
-Deliverables:
-
-- `internal/graph` package.
-- Build graph from issues + blocking edges.
-- Compute ready/blocked/in-progress counts.
-- Compute direct downstream unlocks.
-- Compute blocker depth.
-- Detect cycles.
-- Deterministic data hash.
-
-Acceptance criteria:
-
-- Unit tests cover cycles, diamonds, chains, independent components, parent-scoped graphs, and no-edge graphs.
-- Stable sort order is tested.
-
-### Phase 2 — `bw triage` and `bw ready --ranked`
+### Phase 1 — Graph MVP
 
 Deliverables:
 
-- `bw triage` human output.
-- `bw triage --json` agent output.
-- `bw ready --ranked` reusing triage scoring.
-- Command hints in JSON.
+- `internal/graph` with scheduling graph, counts, downstream unlocks, blocker depth, cycles, connected components.
+- `bw triage --json` and compact human output.
+- `bw ready --ranked` optional view.
 
-Acceptance criteria:
+Acceptance:
 
-- `bw triage --json` is valid deterministic JSON.
-- Top recommendation excludes blocked work by default.
-- `--include-blocked` can surface blockers to clear.
-- Ranking reasons are visible.
+- Ready ranking excludes blocked work by default.
+- Blockers-to-clear recommendations exist.
+- All scoring is explainable.
+- Tests cover cycles, diamonds, parent scopes, due/defer interactions.
 
-### Phase 3 — `bw plan --json`
+### Phase 2 — Execution planning and partitioning
 
 Deliverables:
 
-- Connected-component track grouping.
-- Scope-aware plan generation.
+- `bw plan --json`.
+- Track grouping.
 - Recommended worker count.
-- Track reasons and unblocks.
+- `bw partition --agents N --json`.
 
-Acceptance criteria:
+Acceptance:
 
-- Independent components become separate tracks.
-- A scoped epic only plans inside that scope unless configured otherwise.
-- Output is stable under tests.
+- Tracks are stable and deterministic.
+- Plan can feed pi without additional inference.
+- Dry-run/human output shows why workers were chosen.
 
-### Phase 4 — Prompt integration
-
-Deliverables:
-
-- Prime graph summary.
-- Start graph brief.
-- Close newly-unblocked recommendation polish.
-
-Acceptance criteria:
-
-- Prompt additions stay compact.
-- No large JSON blobs are inserted into normal prime output.
-- Agents receive direct next commands.
-
-### Phase 5 — Pi extension tools
+### Phase 3 — Prompt and brief compiler
 
 Deliverables:
 
-- Adapter methods for triage/plan.
-- `beadwork_triage` and `beadwork_plan` model tools.
-- Status/dashboard graph summary.
+- Compact graph intelligence in `bw prime`.
+- Graph-aware `bw start` context.
+- `bw brief --for worker|planner|reviewer|orchestrator`.
 
-Acceptance criteria:
+Acceptance:
 
-- Tools work only when beadwork is active.
-- Inactive repos fail gracefully.
-- Output mirrors CLI JSON.
+- Prime stays compact.
+- Worker brief includes selection reason and graph context.
+- Briefs have token/line budgets.
 
-### Phase 6 — Track-aware `/bw run`
+### Phase 4 — Pi adapter and track-aware run
 
 Deliverables:
 
-- `/bw run` consumes `bw plan --json`.
-- Worker launches are distributed across tracks.
-- Worker handoff includes graph context.
+- TypeScript adapter methods for triage/plan/brief.
+- `beadwork_triage`, `beadwork_plan`, `beadwork_brief` tools.
+- `/bw run` consumes plan tracks.
+- Worker handoffs use compiled briefs.
+
+Acceptance:
+
+- Existing worker lifecycle remains intact.
 - Run summary reports tracks.
+- Dashboard shows graph health and track occupancy.
 
-Acceptance criteria:
+### Phase 5 — Alerts, drift, and plan CI
 
-- Bounded run launches no more than configured workers.
-- It avoids launching multiple conflicting tickets from the same dependency stream unless safe.
-- Existing validation/landing behavior remains unchanged.
+Deliverables:
 
-### Phase 7 — Later graph intelligence
+- `bw alerts --json`.
+- `bw drift --since REF --json`.
+- `bw validate-plan --scope ID --json`.
+- `/bw adopt` runs validation after plan adoption.
 
-Possible extensions:
+Acceptance:
 
-- graph export (`--mermaid`, `--dot`, `--json`)
-- label health
-- history/diff over beadwork branch
-- recent commit correlation
-- graph repair suggestions
-- advanced centrality metrics
-- dashboard mini-map
+- Cycles and stale high-priority blockers are surfaced before execution.
+- Plan smells are warnings unless structurally unsafe.
+
+### Phase 6 — Causal memory and code correlation
+
+Deliverables:
+
+- `internal/events` over beadwork branch intents.
+- `bw history ID --causal --json`.
+- Initial explicit-ID and pi-landing correlation.
+- `bw file-beads PATH --json`.
+
+Acceptance:
+
+- High-confidence correlations explain method and confidence.
+- Worker briefs can include related prior issues/files.
+
+### Phase 7 — Conflict-aware scheduling
+
+Deliverables:
+
+- file overlap risk from correlation and active worker state.
+- `bw conflict-risk --candidates ... --json`.
+- Pi scheduling avoids high-risk combinations.
+- Landing queue orders by impact/risk.
+
+Acceptance:
+
+- Conservative mode demonstrably avoids same-file worker collisions.
+- Operator can override.
+
+### Phase 8 — Domains, recipes, feedback
+
+Deliverables:
+
+- `bw label health|flow|attention --json`.
+- Recipe storage/evaluation.
+- Feedback/outcomes events.
+- Score explanations include historical outcome factors.
+
+Acceptance:
+
+- Saved recipes produce repeatable plans.
+- Recommendation feedback is visible and auditable.
+
+### Phase 9 — Speculative execution
+
+Deliverables:
+
+- Speculative worker mode in pi.
+- Downstream assumptions recorded in handoff.
+- Landing gates prevent speculative work from merging early.
+- Remediation/kill path when blocker diverges.
+
+Acceptance:
+
+- Opt-in only.
+- Clear dashboard state.
+- No speculative worker can auto-land before prerequisite closure.
 
 ---
 
-## 15. Testing strategy
+## 14. Testing strategy
 
-### Go unit tests
+### 14.1 Go unit tests
 
-Add focused tests for `internal/graph`:
+Graph:
 
-- empty graph
-- single ready issue
-- simple blocker chain
-- diamond dependency
-- multiple independent components
-- dependency cycle
-- parent/child scope
-- closed blocker unlock behavior
-- overdue and deferred issue interactions
-- deterministic hash changes only when graph-relevant state changes
+- empty graph,
+- single issue,
+- chain,
+- diamond,
+- multiple independent components,
+- cycle,
+- parent-scoped subtree,
+- closed blocker unlock,
+- overdue/deferred logic,
+- label flow,
+- deterministic data hash.
 
-### CLI golden tests
+Events/correlation:
 
-Use existing command test patterns to lock:
+- parse intent commits,
+- lifecycle timeline,
+- explicit ID matching,
+- co-commit matching where feasible,
+- confidence scoring,
+- orphan commit detection.
 
-- `bw triage`
-- `bw triage --json`
-- `bw plan --json`
-- `bw ready --ranked`
-- `bw dep cycles`
+Briefs:
 
-Prefer stable fixtures with pinned `BW_CLOCK`.
+- budget enforcement,
+- role-specific sections,
+- stable ordering,
+- no giant JSON blobs in markdown.
 
-### Pi extension tests
+### 14.2 CLI golden tests
 
-Add TypeScript tests for:
+Golden outputs for:
 
-- adapter parsing of triage/plan JSON
-- tool registration return shapes
-- `/bw run` track selection
-- worker handoff graph context
-- inactive repo behavior
+- `bw triage`,
+- `bw triage --json`,
+- `bw plan --json`,
+- `bw partition --agents 3 --json`,
+- `bw alerts --json`,
+- `bw brief --for worker`,
+- `bw history --causal --json`.
 
-### Acceptance scenarios
+Use `BW_CLOCK` for deterministic time.
 
-Representative scenario:
+### 14.3 Pi extension tests
 
-1. Create epic with three independent tracks.
-2. Add blockers and one high-priority blocked issue.
-3. Run `bw triage --json`.
-4. Verify blocker-to-clear recommendation.
-5. Run `bw plan --scope <epic> --json`.
-6. Verify three tracks.
-7. Close one blocker.
-8. Verify newly unblocked work rises in ranking.
+- adapter parsing,
+- tool return shapes,
+- inactive repo behavior,
+- track selection,
+- worker handoff content,
+- dashboard graph status,
+- conflict-risk scheduling,
+- deferred/speculative states later.
+
+### 14.4 End-to-end scenarios
+
+1. Adopt an epic plan.
+2. Validate graph.
+3. Triage ranks a blocker.
+4. Plan creates three safe tracks.
+5. Pi launches three workers.
+6. One worker closes and lands.
+7. Newly unblocked work rises in ranking.
+8. A second worker is predicted to conflict and is deferred.
+9. Prime in a new session reports what changed.
 
 ---
 
-## 16. Failure modes and mitigations
+## 15. Failure modes and mitigations
 
 ### Ranking feels wrong
 
-Mitigation:
+Mitigations:
 
-- expose score parts and reasons
-- keep manual priority meaningful
-- make ranking opt-in for `ready`
-- add config later only after real usage
+- expose score parts,
+- include confidence,
+- support recipes,
+- allow operator override,
+- collect feedback without auto-mutating priority.
 
-### Output becomes too noisy
+### The system becomes too clever
 
-Mitigation:
+Mitigations:
 
-- compact human output
-- detailed JSON only with `--json`
-- prime/start use summaries, not full reports
+- phase features carefully,
+- keep conservative defaults,
+- require opt-in for speculation,
+- make every automation explainable,
+- preserve current simple commands.
 
-### Graph metrics slow down normal commands
+### Prompt context gets noisy
 
-Mitigation:
+Mitigations:
 
-- no graph analysis on default `ready` unless requested
-- cheap MVP metrics only
-- avoid advanced centrality until needed
-- add explicit status fields for skipped metrics
+- strict budgeted briefs,
+- role-specific context,
+- compact prime summary,
+- detailed JSON available only via explicit commands.
 
-### Parent/child hierarchy gets confused with dependencies
+### Graph analysis slows normal use
 
-Mitigation:
+Mitigations:
 
-- treat blocking edges as scheduling dependencies
-- treat parent/child as scope/context
-- test scoped behavior heavily
+- no expensive analysis in default commands,
+- status fields for skipped metrics,
+- optional cache/snapshots later,
+- performance tests on large synthetic graphs.
 
-### `/bw run` becomes too clever
+### File correlation is inaccurate
 
-Mitigation:
+Mitigations:
 
-- keep worker lifecycle unchanged
-- make track-aware scheduling explain decisions
-- provide dry-run/no-spawn plan view
-- allow simple fallback to current ready-order behavior if needed
+- confidence scores,
+- method explanations,
+- high-confidence methods first,
+- feedback confirm/reject path,
+- never block work solely on low-confidence correlation.
 
-### Agents over-trust scores
+### Multi-agent orchestration causes deadlocks
 
-Mitigation:
+Mitigations:
 
-- include warnings that scores are guidance
-- include reasons and graph health
-- keep operator override easy
-
----
-
-## 17. Security and safety considerations
-
-- No shell execution should be added to graph analysis.
-- JSON output should derive only from issue metadata already visible through `bw`.
-- Command hints are strings for humans/agents, not auto-executed actions.
-- Pi extension should continue to route mutations through existing `bw` adapter methods.
-- Worktree landing and validation remain unchanged.
-- Graph export should avoid leaking file contents unless a future correlation feature explicitly opts in.
+- leases expire,
+- operator override,
+- clear worker states,
+- avoid hard locks initially,
+- use advisory reservations before enforcement.
 
 ---
 
-## 18. Open design questions
+## 16. Security and safety
 
-1. Should the top-level command be `bw triage`, `bw next`, or both?
-2. Should `bw plan` be limited to ready work, or include blocked future sequence items?
-3. Should scores be configurable in repo config from day one, or hardcoded until usage stabilizes?
-4. Should graph intelligence include `in_review` if beadwork formalizes that status more broadly?
-5. Should `bw prime` always include graph intelligence, or only when a repo crosses a size threshold?
-6. How should pi-extension display graph health without cluttering the existing dashboard?
-
-Recommended answers for MVP:
-
-- Add `bw triage`; defer `bw next` unless users ask.
-- Make `bw plan` include ready items first, with optional blocked lookahead later.
-- Hardcode weights initially, but expose score parts.
-- Treat unknown statuses conservatively using existing issue status helpers.
-- Always include a very compact graph line in `prime`; include warnings only when meaningful.
-- Add dashboard graph health as text first, not visualization.
+- Graph analysis should not execute arbitrary shell commands.
+- Correlation should use controlled `git` invocations with bounded output.
+- Command hints are not auto-executed.
+- Speculative workers must not auto-land.
+- File paths in briefs should be repo-relative and sanitized.
+- No issue text should leave the machine unless a user explicitly enables hosted semantic providers later.
+- Pi should continue to route mutations through `bw` and existing landing validation.
 
 ---
 
-## 19. Why this should be beadwork-native
+## 17. Recommended first PR boundary
 
-The tempting approach is to export beadwork issues to a `.beads/beads.jsonl` file and keep using `beads_viewer`. That would recover some ranking quickly, but it would make beadwork dependent on an external worldview and would not exploit beadwork’s strongest features.
+Even with the ambitious vision, the first PR should be narrow:
 
-A native implementation is better because:
+1. Shared robot envelope type/helper.
+2. `internal/graph` MVP.
+3. `bw triage --json`.
+4. Compact human `bw triage`.
+5. Tests for deterministic scoring and graph fixtures.
 
-- beadwork already owns issue mutation and sync
-- beadwork already has prompt templates
-- beadwork already has worktree-aware agent delegation through the pi extension
-- beadwork can correlate graph state with git branch/history directly
-- beadwork can brief workers at `start` and `delegate` time
-- beadwork can use graph intelligence during landing and close/unblock loops
+Do **not** start with pi changes, semantic search, file correlation, or speculative execution.
 
-`beads_viewer` is best treated as prior art for agent-safe graph contracts, not as a runtime dependency.
-
----
-
-## 20. Recommended first PR boundary
-
-The first PR should be intentionally narrow:
-
-1. Add `internal/graph` with graph construction, cheap metrics, cycle detection, scoring, and triage DTOs.
-2. Add `bw triage --json` plus compact human output.
-3. Add tests for deterministic ranking and JSON shape.
-4. Do **not** modify pi extension yet.
-5. Do **not** add advanced metrics yet.
-6. Do **not** alter default `bw ready` ordering yet.
-
-The second PR can add:
-
-- `bw ready --ranked`
-- prime/start template summaries
-
-The third PR can add:
-
-- `bw plan --json`
-- pi extension adapter/tools
-- track-aware `/bw run`
-
-This sequencing keeps risk low while quickly proving whether native graph triage improves the user’s workflow.
+But design the output contract so those future features can fit without breaking schemas.
 
 ---
 
-## 21. Handoff notes for implementation agents
+## 18. Recommended first “wow” demo
 
-When implementing, preserve these rules:
+A compelling demo should show more than ranking:
 
-- Graph analysis must be read-only.
-- Blocking dependencies drive scheduling; parent/child drives scope.
-- JSON output must be deterministic.
-- Every score needs explanations.
-- Prompt additions must be short.
-- Existing command behavior must not regress.
-- Tests should pin time with `BW_CLOCK` where due/defer/staleness matters.
-- Pi extension worker lifecycle should not be rewritten; feed it better plans.
+```bash
+bw triage --json
+```
 
-Useful starting points in beadwork:
+Shows top blocker and why.
 
-- `cmd/bw/command.go` for command registry shape.
-- `cmd/bw/ready.go` for ready output behavior.
-- `cmd/bw/start.go` for claim-time brief rendering.
-- `cmd/bw/prime.go` for dynamic prompt context.
-- `internal/issue/graph.go` / dependency helpers for edge loading and graph guards.
-- `internal/issue/list.go` for filtering, overdue, and deferral semantics.
-- `prompts/prime.md` and `prompts/start.md` for prompt additions.
+```bash
+bw plan --scope bw-epic --workers 4 --json
+```
 
-Useful starting points in pi-beadwork-extension:
+Shows four independent tracks.
 
-- `src/bw.ts` for adapter methods and JSON parsing.
-- `src/index.ts` command/tool registration.
-- worker launch and handoff generation paths.
-- bounded epic run orchestration.
-- worker inspection and notice de-duplication.
+```bash
+/bw run bw-epic --workers 4 --dry-run
+```
 
-Useful source ideas from `beads_viewer` research:
+Shows which tickets would launch and why.
 
-- `pkg/analysis/triage.go` for triage output shape and recommendation categories.
-- `pkg/analysis/priority.go` for explainable score composition.
-- `pkg/analysis/plan.go` for execution tracks.
-- `pkg/analysis/graph.go` for phase/status separation.
-- robot command registry for agent-safe command contracts.
+```bash
+bw start bw-42
+```
+
+Shows a worker brief with graph context and expected downstream unlock.
+
+```bash
+bw close bw-42
+```
+
+Shows newly unblocked work and next command.
+
+```bash
+bw prime
+```
+
+In a new session, summarizes graph health, recent change, and top next move.
+
+This creates the visible flywheel:
+
+> triage → plan → delegate → brief → close → unblock → reprime.
+
+That is the seed of the larger control plane.
 
 ---
 
-## 22. Final recommendation
+## 19. Open design questions
 
-Build graph intelligence directly into beadwork, starting with deterministic triage and execution planning. Then use beadwork’s existing prompt and worker surfaces to make that intelligence operational:
+1. Should robot envelopes be introduced globally or only for new commands?
+2. Should recipes live in repo config, user config, or the beadwork branch?
+3. Should pi worker outcomes be durable typed comments or separate event files?
+4. How much graph intelligence should `prime` include by default?
+5. Should file correlation start with explicit issue IDs only before co-commit parsing?
+6. Should `bw partition` be separate from `bw plan`, or a mode of `plan`?
+7. What is the minimum safe design for advisory file reservations?
+8. How should speculative execution represent assumptions and invalidation?
 
-- `bw triage` tells agents what matters.
-- `bw plan` tells the orchestrator what can run in parallel.
-- `bw prime` keeps every session graph-aware.
-- `bw start` gives each worker the reason and context for its ticket.
-- `/bw run` uses tracks to keep high-priority workers busy safely.
+Recommended defaults:
 
-This is the synthesis: keep beadwork’s git-native durability and pi’s delegated-worker machinery, but add the graph-aware recommendation layer that made `beads_viewer` valuable for agent throughput.
+- Use robot envelopes for new commands first.
+- Store recipes on the beadwork branch eventually, but allow config files initially.
+- Start worker outcomes as typed comments to avoid schema churn.
+- Keep `prime` compact with a pointer to `bw triage --json`.
+- Start correlation with explicit IDs and pi landing metadata.
+- Make `partition` a separate command once track planning exists.
+- Start with advisory conflict warnings, not hard locks.
+- Defer speculative execution until conflict-aware scheduling is mature.
+
+---
+
+## 20. Source idea map
+
+| Source idea | Beadwork-native adaptation | Why it matters |
+|---|---|---|
+| `bv --robot-triage` | `bw triage --json` with robot envelope | Stable agent contract |
+| `bv --robot-plan` | `bw plan` / `bw partition` | Feeds pi workers |
+| Two-phase metrics | metric status fields and cheap MVP | Keeps CLI fast |
+| Agent brief export | `bw brief --for ...` | Compaction-resistant context |
+| History correlation | `bw history --causal`, `bw file-beads` | Connects work to code |
+| Label health/flow | `bw label health|flow|attention` | Domains as schedulable overlays |
+| Alerts/drift | `bw alerts`, `bw drift` | Proactive graph hygiene |
+| Recipes | repo-native operational policies | Encodes Jeffery-style workflows |
+| Semantic search | optional local-first hybrid search | Find related work cheaply |
+| Usage hints/schema | `bw schema`, usage hints in JSON | Better zero-shot agent use |
+| Agent swarm protocol | leases, conflict risk, partitioning | Safe parallelism |
+| Feedback accept/ignore | recommendation outcome memory | Local adaptive learning |
+
+---
+
+## 21. Final recommendation
+
+Do not merely add graph ranking to beadwork.
+
+Use `beads_viewer` as proof that agent-facing graph intelligence is valuable, then build the more powerful beadwork-native version:
+
+> **A git-native, prompt-aware, worker-aware, history-aware swarm control plane.**
+
+The MVP should be disciplined: `bw triage`, `bw plan`, ranked ready, compact prime/start integration. But the architecture should explicitly anticipate causal memory, conflict-aware scheduling, context compilation, plan CI, drift alerts, recipes, and adaptive feedback.
+
+This is the radically innovative synthesis:
+
+- `beads_viewer` tells agents what the graph means.
+- Beadwork remembers the graph as durable git-native work state.
+- Pi turns the graph into supervised parallel execution.
+- `prime` and `start` compile the graph into agent behavior.
+- Worker outcomes feed back into the graph.
+
+That flywheel is the product.
