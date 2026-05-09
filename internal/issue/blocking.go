@@ -211,32 +211,25 @@ func (s *Store) Tips(roots []string, edges map[string][]string) ([]*Issue, error
 
 func (s *Store) Ready() ([]*Issue, error) {
 	now := s.Now()
-	overlay := s.buildSubtreeOverlay()
 
 	var ready []*Issue
 
 	for _, id := range s.IDsWithStatus("open") {
-		if overlay.descendants[id] {
-			continue
-		}
 		iss, err := s.readIssue(id)
 		if err != nil {
 			continue
 		}
-		if allResolved(s, overlay.effectiveBlockedBy(iss)) {
+		if allResolved(s, iss.BlockedBy) {
 			ready = append(ready, iss)
 		}
 	}
 
 	for _, id := range s.IDsWithStatus("deferred") {
-		if overlay.descendants[id] {
-			continue
-		}
 		iss, err := s.readIssue(id)
 		if err != nil {
 			continue
 		}
-		if IsDeferralExpired(iss.DeferUntil, now) && allResolved(s, overlay.effectiveBlockedBy(iss)) {
+		if IsDeferralExpired(iss.DeferUntil, now) && allResolved(s, iss.BlockedBy) {
 			ready = append(ready, iss)
 		}
 	}
@@ -416,14 +409,9 @@ func (s *Store) ClosedBlockerSet(issues []*Issue) map[string]bool {
 }
 
 // HiddenBlockerSet returns blocker IDs that should be hidden from ready
-// display: closed blockers plus internal (within-subtree) blockers.
+// display: closed blockers are suppressed so only open blockers show.
 func (s *Store) HiddenBlockerSet(issues []*Issue) map[string]bool {
-	set := s.ClosedBlockerSet(issues)
-	overlay := s.buildSubtreeOverlay()
-	for id := range overlay.descendants {
-		set[id] = true
-	}
-	return set
+	return s.ClosedBlockerSet(issues)
 }
 
 // subtreeOverlay maps each subtree root to its effective (external-only)

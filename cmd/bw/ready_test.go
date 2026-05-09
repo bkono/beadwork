@@ -150,7 +150,7 @@ func TestCmdReadyNoDepsNoBrackets(t *testing.T) {
 	}
 }
 
-func TestCmdReadyEpicAppearsChildrenSuppressed(t *testing.T) {
+func TestCmdReadyEpicAndChildrenAllShown(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
 
@@ -169,15 +169,53 @@ func TestCmdReadyEpicAppearsChildrenSuppressed(t *testing.T) {
 	if !strings.Contains(out, epic.ID) {
 		t.Errorf("epic %s should appear in ready output:\n%s", epic.ID, out)
 	}
-	// Children are part of the root ticket and should not appear individually.
-	if strings.Contains(out, child1.ID) {
-		t.Errorf("child1 %s should NOT appear in ready output:\n%s", child1.ID, out)
+	if !strings.Contains(out, child1.ID) {
+		t.Errorf("child1 %s should appear in ready output:\n%s", child1.ID, out)
 	}
-	if strings.Contains(out, child2.ID) {
-		t.Errorf("child2 %s should NOT appear in ready output:\n%s", child2.ID, out)
+	if !strings.Contains(out, child2.ID) {
+		t.Errorf("child2 %s should appear in ready output:\n%s", child2.ID, out)
 	}
 }
 
+func TestCmdReadyDeepHierarchyNoDuplicates(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+
+	root, _ := env.Store.Create("Root epic", issue.CreateOpts{})
+	mid, _ := env.Store.Create("Mid task", issue.CreateOpts{Parent: root.ID})
+	leaf, _ := env.Store.Create("Leaf task", issue.CreateOpts{Parent: mid.ID})
+	env.Repo.Commit("create 3-level hierarchy")
+
+	var buf bytes.Buffer
+	_, err := cmdReady(env.Store, []string{}, PlainWriter(&buf), nil)
+	if err != nil {
+		t.Fatalf("cmdReady: %v", err)
+	}
+	out := buf.String()
+
+	// All three should appear.
+	if !strings.Contains(out, root.ID) {
+		t.Errorf("root %s should appear in output:\n%s", root.ID, out)
+	}
+	if !strings.Contains(out, mid.ID) {
+		t.Errorf("mid %s should appear in output:\n%s", mid.ID, out)
+	}
+	if !strings.Contains(out, leaf.ID) {
+		t.Errorf("leaf %s should appear in output:\n%s", leaf.ID, out)
+	}
+
+	// Mid should appear exactly once (not duplicated as both child and header).
+	lines := strings.Split(out, "\n")
+	midCount := 0
+	for _, line := range lines {
+		if strings.Contains(line, " "+mid.ID+" ") {
+			midCount++
+		}
+	}
+	if midCount != 1 {
+		t.Errorf("mid %s should appear on exactly 1 line, got %d:\n%s", mid.ID, midCount, out)
+	}
+}
 func TestCmdReadyChildOfClosedParentStillShown(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
@@ -248,9 +286,9 @@ func TestCmdReadyJSONFlatWithParents(t *testing.T) {
 		t.Fatalf("JSON parse: %v", err)
 	}
 	// JSON should be a flat array — no nesting.
-	// Children are suppressed as descendants, so only epic + standalone = 2.
-	if len(issues) != 2 {
-		t.Errorf("expected 2 issues in flat JSON (epic + standalone), got %d", len(issues))
+	// All three issues (epic + child + standalone) are ready.
+	if len(issues) != 3 {
+		t.Errorf("expected 3 issues in flat JSON (epic + child + standalone), got %d", len(issues))
 	}
 }
 

@@ -1185,32 +1185,17 @@ func TestReadySubtreeExternalBlocker(t *testing.T) {
 	for _, r := range ready {
 		readyIDs[r.ID] = true
 	}
-	if readyIDs[epic.ID] {
-		t.Error("epic should NOT be ready (child has external blocker)")
+	// Epic has no direct blockers, so it IS ready.
+	if !readyIDs[epic.ID] {
+		t.Error("epic should be ready (no direct blockers)")
 	}
-
-	blocked, err := env.Store.Blocked()
-	if err != nil {
-		t.Fatalf("Blocked: %v", err)
+	// External issue has no blockers, so it IS ready.
+	if !readyIDs[ext.ID] {
+		t.Error("external should be ready (no blockers)")
 	}
-	var epicBlocked *issue.BlockedIssue
-	for i := range blocked {
-		if blocked[i].ID == epic.ID {
-			epicBlocked = &blocked[i]
-			break
-		}
-	}
-	if epicBlocked == nil {
-		t.Fatal("epic should appear in blocked list")
-	}
-	found := false
-	for _, ob := range epicBlocked.OpenBlockers {
-		if ob == ext.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("epic open blockers = %v, should contain %s", epicBlocked.OpenBlockers, ext.ID)
+	// Child is blocked by ext, so it is NOT ready.
+	if readyIDs[child.ID] {
+		t.Error("child should NOT be ready (blocked by external)")
 	}
 }
 
@@ -1235,35 +1220,21 @@ func TestReadySubtreeMixedBlockers(t *testing.T) {
 	for _, r := range ready {
 		readyIDs[r.ID] = true
 	}
-	if readyIDs[epic.ID] {
-		t.Error("epic should NOT be ready (has external blocker)")
+	// Epic has no direct blockers → ready.
+	if !readyIDs[epic.ID] {
+		t.Error("epic should be ready (no direct blockers)")
 	}
-
-	blocked, err := env.Store.Blocked()
-	if err != nil {
-		t.Fatalf("Blocked: %v", err)
+	// childA has no blockers → ready.
+	if !readyIDs[childA.ID] {
+		t.Error("childA should be ready (no blockers)")
 	}
-	var epicBlocked *issue.BlockedIssue
-	for i := range blocked {
-		if blocked[i].ID == epic.ID {
-			epicBlocked = &blocked[i]
-			break
-		}
+	// childB blocked by childA → not ready.
+	if readyIDs[childB.ID] {
+		t.Error("childB should NOT be ready (blocked by childA)")
 	}
-	if epicBlocked == nil {
-		t.Fatal("epic should appear in blocked list")
-	}
-	hasExt := false
-	for _, ob := range epicBlocked.OpenBlockers {
-		if ob == ext.ID {
-			hasExt = true
-		}
-		if ob == childA.ID {
-			t.Errorf("internal blocker %s should not appear in epic's open blockers", childA.ID)
-		}
-	}
-	if !hasExt {
-		t.Errorf("epic open blockers should contain external %s", ext.ID)
+	// childC blocked by ext → not ready.
+	if readyIDs[childC.ID] {
+		t.Error("childC should NOT be ready (blocked by external)")
 	}
 }
 
@@ -1286,38 +1257,17 @@ func TestReadySubtreeGrandchild(t *testing.T) {
 	for _, r := range ready {
 		readyIDs[r.ID] = true
 	}
-	if readyIDs[epic.ID] {
-		t.Error("epic should NOT be ready (grandchild has external blocker)")
+	// Epic has no direct blockers → ready.
+	if !readyIDs[epic.ID] {
+		t.Error("epic should be ready (no direct blockers)")
 	}
-
-	blocked, err := env.Store.Blocked()
-	if err != nil {
-		t.Fatalf("Blocked: %v", err)
+	// Child has no direct blockers → ready.
+	if !readyIDs[child.ID] {
+		t.Error("child should be ready (no direct blockers)")
 	}
-	var epicBlocked *issue.BlockedIssue
-	for i := range blocked {
-		if blocked[i].ID == epic.ID {
-			epicBlocked = &blocked[i]
-			break
-		}
-	}
-	if epicBlocked == nil {
-		t.Fatal("epic should appear in blocked list")
-	}
-	found := false
-	for _, ob := range epicBlocked.OpenBlockers {
-		if ob == ext.ID {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("external blocker should bubble up to epic, got %v", epicBlocked.OpenBlockers)
-	}
-	// Grandchild should be suppressed from blocked
-	for _, bi := range blocked {
-		if bi.ID == grandchild.ID {
-			t.Error("grandchild should be suppressed from blocked list")
-		}
+	// Grandchild blocked by ext → not ready.
+	if readyIDs[grandchild.ID] {
+		t.Error("grandchild should NOT be ready (blocked by external)")
 	}
 }
 
@@ -1364,18 +1314,18 @@ func TestBlockedSubtreeParentDirectAndChildExternal(t *testing.T) {
 	}
 }
 
-func TestReadySubtreeBlockedRootDescendantsExcluded(t *testing.T) {
+func TestReadySubtreeBlockedRootDescendantsIncluded(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
 
-	// Epic h3p with two children; external ticket blocks one child,
-	// making the whole subtree blocked. The unblocked child (h3p.2)
-	// should NOT appear in ready because its root is blocked.
+	// Epic with two children; external ticket blocks one child.
+	// The unblocked child (child2) should appear in ready because
+	// each issue is evaluated individually.
 	epic, _ := env.Store.Create("Epic h3p", issue.CreateOpts{Type: "epic"})
 	child1, _ := env.Store.Create("Child h3p.1", issue.CreateOpts{Parent: epic.ID})
 	child2, _ := env.Store.Create("Child h3p.2", issue.CreateOpts{Parent: epic.ID})
 	ext, _ := env.Store.Create("External blocker", issue.CreateOpts{})
-	env.Store.Link(ext.ID, child1.ID) // external blocks child1 → epic is blocked
+	env.Store.Link(ext.ID, child1.ID) // external blocks child1
 	env.CommitIntent("setup")
 
 	ready, err := env.Store.Ready()
@@ -1387,26 +1337,25 @@ func TestReadySubtreeBlockedRootDescendantsExcluded(t *testing.T) {
 		readyIDs[r.ID] = true
 	}
 
-	if readyIDs[epic.ID] {
-		t.Error("epic should NOT be in ready (child has external blocker)")
+	// Epic has no direct blockers → ready.
+	if !readyIDs[epic.ID] {
+		t.Error("epic should be in ready (no direct blockers)")
 	}
 	if readyIDs[child1.ID] {
 		t.Error("child1 should NOT be in ready (directly blocked by external)")
 	}
-	if readyIDs[child2.ID] {
-		t.Error("child2 should NOT be in ready (descendant of blocked root)")
+	// child2 has no blockers → ready.
+	if !readyIDs[child2.ID] {
+		t.Error("child2 should be in ready (no blockers)")
 	}
-
-	_ = child2 // suppress unused warning
 }
 
-func TestReadySubtreeReadyRootDescendantsExcluded(t *testing.T) {
+func TestReadySubtreeReadyRootDescendantsIncluded(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
 
-	// Epic with two children linked internally. No external blockers,
-	// so the root is ready — but children are part of the root ticket
-	// and should not appear individually in the ready list.
+	// Epic with two children linked internally. No external blockers.
+	// Both the root and unblocked children appear individually in the ready list.
 	epic, _ := env.Store.Create("Ready epic", issue.CreateOpts{Type: "epic"})
 	childA, _ := env.Store.Create("Child A", issue.CreateOpts{Parent: epic.ID})
 	childB, _ := env.Store.Create("Child B", issue.CreateOpts{Parent: epic.ID})
@@ -1423,45 +1372,42 @@ func TestReadySubtreeReadyRootDescendantsExcluded(t *testing.T) {
 	}
 
 	if !readyIDs[epic.ID] {
-		t.Error("epic should be in ready (only internal blockers)")
+		t.Error("epic should be in ready (no direct blockers)")
 	}
-	if readyIDs[childA.ID] {
-		t.Error("childA should NOT be in ready (descendant, part of root ticket)")
+	// childA has no blockers → ready.
+	if !readyIDs[childA.ID] {
+		t.Error("childA should be in ready (no blockers)")
 	}
+	// childB is blocked by childA → not ready.
 	if readyIDs[childB.ID] {
-		t.Error("childB should NOT be in ready (descendant, part of root ticket)")
+		t.Error("childB should NOT be in ready (blocked by childA)")
 	}
 }
 
-func TestHiddenBlockerSetIncludesDescendants(t *testing.T) {
+func TestHiddenBlockerSetOnlyClosedBlockers(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
 
-	// Epic with children that block the parent via explicit links.
-	// HiddenBlockerSet should include children so they're stripped
-	// from the dep annotation in the ready display.
-	epic, _ := env.Store.Create("Epic", issue.CreateOpts{Type: "epic"})
-	childA, _ := env.Store.Create("Child A", issue.CreateOpts{Parent: epic.ID})
-	childB, _ := env.Store.Create("Child B", issue.CreateOpts{Parent: epic.ID})
-	env.Store.Link(childA.ID, epic.ID)
-	env.Store.Link(childB.ID, epic.ID)
+	// Create an issue blocked by two others; close one blocker.
+	// HiddenBlockerSet should contain only the closed blocker.
+	a, _ := env.Store.Create("Blocker A", issue.CreateOpts{})
+	b, _ := env.Store.Create("Blocker B", issue.CreateOpts{})
+	c, _ := env.Store.Create("Blocked", issue.CreateOpts{})
+	env.Store.Link(a.ID, c.ID)
+	env.Store.Link(b.ID, c.ID)
+	env.Store.Close(a.ID, "done")
 	env.CommitIntent("setup")
 
-	ready, err := env.Store.Ready()
-	if err != nil {
-		t.Fatalf("Ready: %v", err)
-	}
+	// b is open and unblocked → ready; c is blocked → not ready
+	// but we can pass any slice to HiddenBlockerSet.
+	issues := []*issue.Issue{c}
+	hidden := env.Store.HiddenBlockerSet(issues)
 
-	hidden := env.Store.HiddenBlockerSet(ready)
-
-	if !hidden[childA.ID] {
-		t.Errorf("childA (%s) should be in hidden set (internal blocker)", childA.ID)
+	if !hidden[a.ID] {
+		t.Errorf("closed blocker %s should be in hidden set", a.ID)
 	}
-	if !hidden[childB.ID] {
-		t.Errorf("childB (%s) should be in hidden set (internal blocker)", childB.ID)
-	}
-	if hidden[epic.ID] {
-		t.Error("epic should NOT be in hidden set (it's the root)")
+	if hidden[b.ID] {
+		t.Errorf("open blocker %s should NOT be in hidden set", b.ID)
 	}
 }
 

@@ -88,24 +88,48 @@ func cmdReady(store *issue.Store, args []string, w Writer, _ *config.Config) (*c
 			}
 		}
 
+		// Identify nested parents — parents whose ID appears as a child in
+		// another group. These are printed recursively from their parent's
+		// group rather than as top-level groups.
+		nestedParents := make(map[string]bool)
+		for _, children := range groups {
+			for _, c := range children {
+				if _, ok := groups[c.ID]; ok {
+					nestedParents[c.ID] = true
+				}
+			}
+		}
+
+		// Recursive group printer: prints a parent header then its children,
+		// descending into sub-groups when a child is itself a parent.
+		var printGroup func(parentID string)
+		printGroup = func(parentID string) {
+			parent, err := store.Get(parentID)
+			if err == nil {
+				fmt.Fprintln(w, md.IssueOneLinerWithDue(parent, now, closedBlockers))
+			}
+			w.Push(2)
+			for _, child := range groups[parentID] {
+				if _, hasSubGroup := groups[child.ID]; hasSubGroup {
+					printGroup(child.ID)
+				} else {
+					fmt.Fprintln(w, md.IssueOneLinerWithDue(child, now, closedBlockers))
+				}
+			}
+			w.Pop()
+		}
+
 		// Print standalone issues.
 		for _, iss := range filteredStandalone {
 			fmt.Fprintln(w, md.IssueOneLinerWithDue(iss, now, closedBlockers))
 		}
 
-		// Print groups.
+		// Print groups — only root-level groups (skip nested parents).
 		for _, parentID := range parentOrder {
-			// Print parent as group header.
-			parent, err := store.Get(parentID)
-			if err == nil {
-				fmt.Fprintln(w, md.IssueOneLinerWithDue(parent, now, closedBlockers))
+			if nestedParents[parentID] {
+				continue
 			}
-			// Print children indented.
-			w.Push(2)
-			for _, child := range groups[parentID] {
-				fmt.Fprintln(w, md.IssueOneLinerWithDue(child, now, closedBlockers))
-			}
-			w.Pop()
+			printGroup(parentID)
 		}
 	}
 
