@@ -327,10 +327,18 @@ var commands = []Command{
 		Run:        cmdReady,
 	},
 	{
-		Name:    "blocked",
-		Summary: "List blocked issues",
+		Name:        "blocked",
+		Summary:     "List blocked issues and their open blockers",
+		Description: "List every non-closed issue that has at least one open blocker.\nNested children are included. Pass an issue ID to inspect that issue only.",
+		Positionals: []Positional{
+			{Name: "[id]", Help: "Inspect one issue and its open blockers"},
+		},
 		Flags: []Flag{
 			{Long: "--json", Help: "Output as JSON"},
+		},
+		Examples: []Example{
+			{Cmd: "bw blocked", Help: "List all blocked issues"},
+			{Cmd: "bw blocked bw-a3f8", Help: "Show blockers for one issue"},
 		},
 		NeedsStore: true,
 		Run:        cmdBlocked,

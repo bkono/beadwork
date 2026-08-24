@@ -11,6 +11,7 @@ import (
 )
 
 type BlockedArgs struct {
+	ID   string
 	JSON bool
 }
 
@@ -19,7 +20,10 @@ func parseBlockedArgs(raw []string) (BlockedArgs, error) {
 	if err != nil {
 		return BlockedArgs{}, err
 	}
-	return BlockedArgs{JSON: a.JSON()}, nil
+	if len(a.Pos()) > 1 {
+		return BlockedArgs{}, fmt.Errorf("usage: bw blocked [id] [--json]")
+	}
+	return BlockedArgs{ID: a.PosFirst(), JSON: a.JSON()}, nil
 }
 
 func cmdBlocked(store *issue.Store, args []string, w Writer, _ *config.Config) (*config.Config, error) {
@@ -28,9 +32,28 @@ func cmdBlocked(store *issue.Store, args []string, w Writer, _ *config.Config) (
 		return nil, err
 	}
 
+	var filterID string
+	if ba.ID != "" {
+		iss, err := store.Get(ba.ID)
+		if err != nil {
+			return nil, err
+		}
+		filterID = iss.ID
+	}
+
 	blocked, err := store.Blocked()
 	if err != nil {
 		return nil, err
+	}
+
+	if filterID != "" {
+		var filtered []issue.BlockedIssue
+		for _, bi := range blocked {
+			if bi.ID == filterID {
+				filtered = append(filtered, bi)
+			}
+		}
+		blocked = filtered
 	}
 
 	if ba.JSON {
@@ -47,13 +70,19 @@ func cmdBlocked(store *issue.Store, args []string, w Writer, _ *config.Config) (
 
 	for _, bi := range blocked {
 		fmt.Fprintln(w)
-		fmt.Fprintf(w, "{p:%d} {id:%s} %s\n",
-			bi.Priority, bi.ID, md.Escape(bi.Title))
+		fmt.Fprintf(w, "{p:%d} {id:%s} %s  %s\n",
+			bi.Priority, bi.ID, bi.Status, md.Escape(bi.Title))
 		w.Push(2)
 
-		blockerIDs := make([]string, len(bi.OpenBlockers))
-		copy(blockerIDs, bi.OpenBlockers)
-		fmt.Fprintf(w, "Blocked by: %s\n", strings.Join(blockerIDs, ", "))
+		fmt.Fprintln(w, "Blocked by:")
+		for _, blocker := range bi.OpenBlockers {
+			if blocker.Title == "" {
+				fmt.Fprintf(w, "{id:%s} %s\n", blocker.ID, blocker.Status)
+			} else {
+				fmt.Fprintf(w, "{id:%s} %s  %s\n",
+					blocker.ID, blocker.Status, md.Escape(blocker.Title))
+			}
+		}
 
 		if len(bi.Blocks) > 0 {
 			blockIDs := make([]string, len(bi.Blocks))

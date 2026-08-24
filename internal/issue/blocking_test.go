@@ -392,8 +392,14 @@ func TestBlockedSingle(t *testing.T) {
 	if blocked[0].ID != b.ID {
 		t.Errorf("blocked ID = %q, want %q", blocked[0].ID, b.ID)
 	}
-	if len(blocked[0].OpenBlockers) != 1 || blocked[0].OpenBlockers[0] != a.ID {
+	if len(blocked[0].OpenBlockers) != 1 || blocked[0].OpenBlockers[0].ID != a.ID {
 		t.Errorf("open blockers = %v, want [%s]", blocked[0].OpenBlockers, a.ID)
+	}
+	if blocked[0].OpenBlockers[0].Title != "Blocker" {
+		t.Errorf("blocker title = %q, want Blocker", blocked[0].OpenBlockers[0].Title)
+	}
+	if blocked[0].OpenBlockers[0].Status != "open" {
+		t.Errorf("blocker status = %q, want open", blocked[0].OpenBlockers[0].Status)
 	}
 }
 
@@ -417,8 +423,11 @@ func TestBlockedMultipleBlockers(t *testing.T) {
 		t.Fatalf("got %d blocked, want 1", len(blocked))
 	}
 	// Only the open blocker should appear
-	if len(blocked[0].OpenBlockers) != 1 || blocked[0].OpenBlockers[0] != a.ID {
+	if len(blocked[0].OpenBlockers) != 1 || blocked[0].OpenBlockers[0].ID != a.ID {
 		t.Errorf("open blockers = %v, want [%s]", blocked[0].OpenBlockers, a.ID)
+	}
+	if blocked[0].OpenBlockers[0].Title != "Blocker A" {
+		t.Errorf("blocker title = %q, want Blocker A", blocked[0].OpenBlockers[0].Title)
 	}
 }
 
@@ -457,6 +466,47 @@ func TestBlockedNoBlockers(t *testing.T) {
 	}
 	if len(blocked) != 0 {
 		t.Errorf("got %d blocked, want 0", len(blocked))
+	}
+}
+
+func TestBlockedChildOfEpicBlockedBySibling(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+
+	epic, _ := env.Store.Create("Epic", issue.CreateOpts{Type: "epic"})
+	sib, _ := env.Store.Create("Sibling blocker", issue.CreateOpts{Parent: epic.ID})
+	child, _ := env.Store.Create("Nested child", issue.CreateOpts{Parent: epic.ID})
+	env.Store.Link(sib.ID, child.ID)
+	env.CommitIntent("setup")
+
+	blocked, err := env.Store.Blocked()
+	if err != nil {
+		t.Fatalf("Blocked: %v", err)
+	}
+
+	var childBlocked *issue.BlockedIssue
+	for i := range blocked {
+		if blocked[i].ID == child.ID {
+			childBlocked = &blocked[i]
+		}
+		if blocked[i].ID == epic.ID {
+			t.Error("epic should not appear in blocked (no direct open blockers)")
+		}
+	}
+	if childBlocked == nil {
+		t.Fatal("nested child blocked by a sibling must appear")
+	}
+	if len(childBlocked.OpenBlockers) != 1 {
+		t.Fatalf("open blockers = %v, want 1", childBlocked.OpenBlockers)
+	}
+	if childBlocked.OpenBlockers[0].ID != sib.ID {
+		t.Errorf("blocker id = %q, want %s", childBlocked.OpenBlockers[0].ID, sib.ID)
+	}
+	if childBlocked.OpenBlockers[0].Title != "Sibling blocker" {
+		t.Errorf("blocker title = %q, want Sibling blocker", childBlocked.OpenBlockers[0].Title)
+	}
+	if childBlocked.OpenBlockers[0].Status != "open" {
+		t.Errorf("blocker status = %q, want open", childBlocked.OpenBlockers[0].Status)
 	}
 }
 
@@ -1160,10 +1210,21 @@ func TestReadySubtreeInternalBlockerSuppressed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Blocked: %v", err)
 	}
-	for _, bi := range blocked {
-		if bi.ID == childB.ID {
-			t.Error("child B should be suppressed from blocked (internal blocker)")
+	var childBBlocked *issue.BlockedIssue
+	for i := range blocked {
+		if blocked[i].ID == childB.ID {
+			childBBlocked = &blocked[i]
+			break
 		}
+	}
+	if childBBlocked == nil {
+		t.Fatal("child B should appear in blocked (sibling blocker, independent of nesting)")
+	}
+	if len(childBBlocked.OpenBlockers) != 1 || childBBlocked.OpenBlockers[0].ID != childA.ID {
+		t.Errorf("child B blockers = %v, want [%s]", childBBlocked.OpenBlockers, childA.ID)
+	}
+	if childBBlocked.OpenBlockers[0].Title != "Child A" {
+		t.Errorf("blocker title = %q, want Child A", childBBlocked.OpenBlockers[0].Title)
 	}
 }
 
@@ -1297,20 +1358,22 @@ func TestBlockedSubtreeParentDirectAndChildExternal(t *testing.T) {
 	if epicBlocked == nil {
 		t.Fatal("epic should appear in blocked list")
 	}
-	hasA, hasB := false, false
-	for _, ob := range epicBlocked.OpenBlockers {
-		if ob == extA.ID {
-			hasA = true
-		}
-		if ob == extB.ID {
-			hasB = true
+	if len(epicBlocked.OpenBlockers) != 1 || epicBlocked.OpenBlockers[0].ID != extA.ID {
+		t.Errorf("epic blockers = %v, want [%s] (child edges stay on the child)", epicBlocked.OpenBlockers, extA.ID)
+	}
+
+	var childBlocked *issue.BlockedIssue
+	for i := range blocked {
+		if blocked[i].ID == child.ID {
+			childBlocked = &blocked[i]
+			break
 		}
 	}
-	if !hasA {
-		t.Errorf("epic should have direct blocker %s", extA.ID)
+	if childBlocked == nil {
+		t.Fatal("child should appear in blocked with its own external blocker")
 	}
-	if !hasB {
-		t.Errorf("epic should have child's external blocker %s", extB.ID)
+	if len(childBlocked.OpenBlockers) != 1 || childBlocked.OpenBlockers[0].ID != extB.ID {
+		t.Errorf("child blockers = %v, want [%s]", childBlocked.OpenBlockers, extB.ID)
 	}
 }
 
