@@ -4,6 +4,7 @@
 package treefs
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +28,10 @@ type DirEntry struct {
 
 func (d DirEntry) Name() string { return d.name }
 func (d DirEntry) IsDir() bool  { return d.isDir }
+
+// ErrRefMoved is returned when Commit loses the CAS race because another
+// writer advanced the tracked ref between snapshot and update.
+var ErrRefMoved = errors.New("ref moved")
 
 // FileInfo holds metadata about a file or directory.
 type FileInfo struct {
@@ -480,8 +485,8 @@ func (t *TreeFS) casUpdateRef(newHash plumbing.Hash) error {
 
 	// CAS check
 	if currentRef.Hash() != t.baseRef {
-		return fmt.Errorf("conflict: ref %s has moved (expected %s, got %s)",
-			t.ref, t.baseRef.String()[:8], currentRef.Hash().String()[:8])
+		return fmt.Errorf("%w: ref %s (expected %s, got %s)",
+			ErrRefMoved, t.ref, t.baseRef.String()[:8], currentRef.Hash().String()[:8])
 	}
 
 	// Update ref
@@ -827,9 +832,21 @@ func (t *TreeFS) HasRemotes() (bool, error) {
 }
 
 // SetRef directly sets a reference. Used by Init to create tracking branches.
+// When the target ref is the one this TreeFS is tracking, the in-memory
+// snapshot is advanced so subsequent reads and Commit() stay consistent
+// with the new ref state.
 func (t *TreeFS) SetRef(name string, hash plumbing.Hash) error {
 	ref := plumbing.NewHashReference(plumbing.ReferenceName(name), hash)
-	return t.repo.Storer.SetReference(ref)
+	if err := t.repo.Storer.SetReference(ref); err != nil {
+		return err
+	}
+	if plumbing.ReferenceName(name) == t.ref {
+		t.baseRef = hash
+		t.overlay = make(map[string][]byte)
+		t.dirs = make(map[string]bool)
+		return t.reloadBase()
+	}
+	return nil
 }
 
 // DeleteRef removes a reference.
