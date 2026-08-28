@@ -1,8 +1,13 @@
 version: 2
 
+project_name: beadwork
+
 builds:
   - main: ./cmd/bw
     binary: bw
+    ldflags:
+      - -s -w
+      - -X=main.version={{.Version}}
     goos:
       - linux
       - darwin
@@ -12,6 +17,34 @@ builds:
       - arm64
 
 archives:
-  - format_overrides:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - '^Merge'
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: bkono
+    name: beadwork

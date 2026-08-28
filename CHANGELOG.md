@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 0.13.0 — 2026-08-28
+
 - **Current-branch-first agent workflow** — `bw prime` now tells agents to work in the current checkout by default, including on `main`, with branch/PR/worktree delivery treated as optional when requested or configured. Same-branch swarms coordinate through epics, child tickets, and comments instead of assuming one worktree per agent.
 - **Start prompt landing cleanup** — `bw start` no longer emits worktree-specific PR instructions by default. PR guidance now says to push/open/update the current branch only when `workflow.review=pr` is configured, and task/bug landing includes `bw sync`.
 - **Git context fix** — linked worktrees are detected correctly even when `bw prime` runs from a subdirectory inside the worktree.
+- **Version-check cache fix** — upgrade notifications no longer fire from stale release metadata after fork/upstream binary switches; cached lookups are scoped to the release URL.
+- **Release pipeline** — GoReleaser publishes to `bkono/beadwork` with cross-platform binaries, conventional-commit changelog grouping, and `go tool goreleaser` via the module `tool` block.
 
 ## 0.12.3 — 2026-04-12
 
