@@ -33,6 +33,11 @@ var (
 type versionCache struct {
 	LastCheck     string `json:"last_check"`
 	LatestVersion string `json:"latest_version,omitempty"`
+	ReleaseURL    string `json:"release_url,omitempty"`
+}
+
+func cacheMatchesRelease(c *versionCache) bool {
+	return c != nil && c.ReleaseURL == releaseURL
 }
 
 func readCache() *versionCache {
@@ -70,10 +75,10 @@ func writeCache(c *versionCache) {
 func checkForNewerVersion() string {
 	now := vcheckNow()
 
-	// Read cache; skip if checked recently.
+	// Read cache; skip if checked recently for this release URL.
 	if c := readCache(); c != nil {
 		if t, err := time.Parse(time.RFC3339, c.LastCheck); err == nil {
-			if now.Sub(t) < checkInterval {
+			if now.Sub(t) < checkInterval && cacheMatchesRelease(c) {
 				// Return cached result.
 				cur := vcheckCurrentVersion()
 				if c.LatestVersion != "" && compareVersions(cur, c.LatestVersion) < 0 {
@@ -85,7 +90,10 @@ func checkForNewerVersion() string {
 	}
 
 	// Write timestamp now — success or failure, we tried today.
-	cache := &versionCache{LastCheck: now.Format(time.RFC3339)}
+	cache := &versionCache{
+		LastCheck:  now.Format(time.RFC3339),
+		ReleaseURL: releaseURL,
+	}
 	defer writeCache(cache)
 
 	release, err := vcheckFetchRelease()
