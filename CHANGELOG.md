@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.0 — 2026-08-29
+
+### Features
+
+- feat: automate release tagging and changelog on merge to main
+
 ## 0.13.0 — 2026-08-28
 
 - **Current-branch-first agent workflow** — `bw prime` now tells agents to work in the current checkout by default, including on `main`, with branch/PR/worktree delivery treated as optional when requested or configured. Same-branch swarms coordinate through epics, child tickets, and comments instead of assuming one worktree per agent.
