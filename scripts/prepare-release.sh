@@ -56,6 +56,10 @@ matches_prefix() {
 	return 1
 }
 
+is_breaking() {
+	[[ "$1" =~ !: ]]
+}
+
 append_group() {
 	local title="$1"
 	shift
@@ -63,6 +67,9 @@ append_group() {
 	local found=false
 
 	for subject in "${commits[@]}"; do
+		if is_breaking "$subject"; then
+			continue
+		fi
 		if matches_prefix "$subject" "${prefixes[@]}"; then
 			if [ "$found" = false ]; then
 				echo "### ${title}" >>"$section_file"
@@ -78,12 +85,34 @@ append_group() {
 	fi
 }
 
+append_breaking_group() {
+	local found=false
+	for subject in "${commits[@]}"; do
+		if ! is_breaking "$subject"; then
+			continue
+		fi
+		if [ "$found" = false ]; then
+			echo "### Breaking Changes" >>"$section_file"
+			echo >>"$section_file"
+			found=true
+		fi
+		echo "- ${subject}" >>"$section_file"
+	done
+	if [ "$found" = true ]; then
+		echo >>"$section_file"
+	fi
+}
+
+append_breaking_group
 append_group "Features" feat
 append_group "Bug Fixes" fix
 append_group "Performance" perf
 
 other_found=false
 for subject in "${commits[@]}"; do
+	if is_breaking "$subject"; then
+		continue
+	fi
 	if matches_prefix "$subject" feat fix perf chore ci docs test style build; then
 		continue
 	fi

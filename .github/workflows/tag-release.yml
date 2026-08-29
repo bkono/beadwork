@@ -21,6 +21,7 @@ jobs:
       github.repository == 'bkono/beadwork' &&
       (github.event_name == 'workflow_dispatch' ||
         (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
          !startsWith(github.event.workflow_run.head_commit.message, 'chore(release):')))
     timeout-minutes: 30
     steps:
@@ -52,7 +53,7 @@ jobs:
           git add CHANGELOG.md cmd/bw/main.go
           git commit -m "chore(release): v${VERSION}"
           git tag -a "v${VERSION}" -m "Release v${VERSION}"
-          git push origin main
+          git push origin HEAD:main
           git push origin "v${VERSION}"
 
       # GITHUB_TOKEN pushes do not trigger other workflows, so publish here
