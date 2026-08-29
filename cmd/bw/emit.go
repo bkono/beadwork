@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
 // fprintGitContext prints a one-line summary of the current git state.

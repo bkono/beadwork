@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 // hasListedIssue checks if the given issue ID appears as a primary listed
@@ -327,8 +327,12 @@ func TestScenarioFullWorkflow(t *testing.T) {
 			t.Fatalf("blocked --json: %v", err)
 		}
 		var result []struct {
-			ID           string   `json:"id"`
-			OpenBlockers []string `json:"open_blockers"`
+			ID           string `json:"id"`
+			OpenBlockers []struct {
+				ID     string `json:"id"`
+				Title  string `json:"title"`
+				Status string `json:"status"`
+			} `json:"open_blockers"`
 		}
 		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
 			t.Fatalf("JSON parse: %v", err)
@@ -339,9 +343,11 @@ func TestScenarioFullWorkflow(t *testing.T) {
 		if result[0].ID != idC {
 			t.Errorf("blocked id=%q, want %q", result[0].ID, idC)
 		}
-		if len(result[0].OpenBlockers) != 0 {
-			// B is in_progress, which counts as an open blocker for the blocked list
-			// The Blocked() method checks if blockers have status != "closed"
+		if len(result[0].OpenBlockers) != 1 || result[0].OpenBlockers[0].ID != idB {
+			t.Errorf("open_blockers = %v, want [%s]", result[0].OpenBlockers, idB)
+		}
+		if result[0].OpenBlockers[0].Status != "in_progress" {
+			t.Errorf("blocker status = %q, want in_progress", result[0].OpenBlockers[0].Status)
 		}
 	})
 

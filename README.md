@@ -1,7 +1,7 @@
 # Beadwork
 
-[![CI](https://github.com/jallum/beadwork/actions/workflows/ci.yml/badge.svg)](https://github.com/jallum/beadwork/actions/workflows/ci.yml)
-[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/jallum/beadwork/badges/coverage.json)](https://github.com/jallum/beadwork/actions/workflows/ci.yml)
+[![CI](https://github.com/bkono/beadwork/actions/workflows/ci.yml/badge.svg)](https://github.com/bkono/beadwork/actions/workflows/ci.yml)
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/bkono/beadwork/badges/coverage.json)](https://github.com/bkono/beadwork/actions/workflows/ci.yml)
 
 Git-native work management for AI coding agents.
 
@@ -27,10 +27,10 @@ Join the [Beadwork Discord](https://discord.gg/WCp4wuJwKe) for discussion, suppo
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jallum/beadwork/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/bkono/beadwork/main/install.sh | sh
 ```
 
-Or download a binary from [releases](https://github.com/jallum/beadwork/releases/latest). To update an existing install: `bw upgrade`.
+Or download a binary from [releases](https://github.com/bkono/beadwork/releases/latest). To update an existing install: `bw upgrade`.
 
 Coming from beads? see [docs/migration.md](docs/migration.md).
 

@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/jallum/beadwork/internal/config"
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 // Flag describes a single command-line flag.
@@ -40,17 +40,6 @@ type Command struct {
 	Examples    []Example
 	NeedsStore  bool // when true, main injects an initialized store
 	Run         func(store *issue.Store, args []string, w Writer, cfg *config.Config) (*config.Config, error)
-}
-
-// valueFlags returns the long names of flags that take a value (non-boolean).
-func (c *Command) valueFlags() []string {
-	var vf []string
-	for _, f := range c.Flags {
-		if f.Value != "" {
-			vf = append(vf, f.Long)
-		}
-	}
-	return vf
 }
 
 // expandAliases replaces short flags with their long equivalents.
@@ -327,10 +316,18 @@ var commands = []Command{
 		Run:        cmdReady,
 	},
 	{
-		Name:    "blocked",
-		Summary: "List blocked issues",
+		Name:        "blocked",
+		Summary:     "List blocked issues and their open blockers",
+		Description: "List every non-closed issue that has at least one open blocker.\nNested children are included. Pass an issue ID to inspect that issue only.",
+		Positionals: []Positional{
+			{Name: "[id]", Help: "Inspect one issue and its open blockers"},
+		},
 		Flags: []Flag{
 			{Long: "--json", Help: "Output as JSON"},
+		},
+		Examples: []Example{
+			{Cmd: "bw blocked", Help: "List all blocked issues"},
+			{Cmd: "bw blocked bw-a3f8", Help: "Show blockers for one issue"},
 		},
 		NeedsStore: true,
 		Run:        cmdBlocked,

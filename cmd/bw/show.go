@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/md"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/md"
 )
 
 // validShowSections lists section names accepted by --only.

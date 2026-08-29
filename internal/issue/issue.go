@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jallum/beadwork/internal/treefs"
+	"github.com/bkono/beadwork/internal/treefs"
 )
 
 type Comment struct {
@@ -82,6 +82,35 @@ func (s *Store) Commit(intent string) error {
 func (s *Store) ClearCache() {
 	s.cache = nil
 	s.idSet = nil
+}
+
+// Refresh reloads the underlying TreeFS from the current ref.
+func (s *Store) Refresh() error {
+	return s.FS.Refresh()
+}
+
+// Reopener is implemented by Committers that can fully reopen their
+// underlying TreeFS (fresh git.PlainOpen, fresh storer). Used between
+// retry attempts to discard any cached state.
+type Reopener interface {
+	Reopen() (*treefs.TreeFS, error)
+}
+
+// ReopenFS fully replaces the underlying TreeFS via the Committer's
+// Reopener, then clears caches. Stronger than Refresh: discards any
+// cached go-git state (packed-refs cache, etc.). Falls back to Refresh
+// if the Committer does not implement Reopener.
+func (s *Store) ReopenFS() error {
+	s.ClearCache()
+	if r, ok := s.Committer.(Reopener); ok {
+		tfs, err := r.Reopen()
+		if err != nil {
+			return err
+		}
+		s.FS = tfs
+		return nil
+	}
+	return s.FS.Refresh()
 }
 
 // Now returns the current time in UTC. If the BW_CLOCK environment variable

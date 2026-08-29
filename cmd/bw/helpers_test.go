@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -304,13 +304,6 @@ func TestRelativeTimeSince(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("relativeTimeSince(%v, now) = %q, want %q", tt.t, got, tt.want)
 		}
-	}
-}
-
-func TestRelativeTimeInvalidTimestamp(t *testing.T) {
-	got := relativeTime("not-a-timestamp")
-	if got != "not-a-timestamp" {
-		t.Errorf("relativeTime(invalid) = %q, want raw string", got)
 	}
 }
 

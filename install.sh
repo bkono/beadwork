@@ -2,9 +2,9 @@
 set -e
 
 # Install beadwork (bw) from GitHub releases.
-# Usage: curl -fsSL https://raw.githubusercontent.com/jallum/beadwork/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/bkono/beadwork/main/install.sh | sh
 
-REPO="jallum/beadwork"
+REPO="bkono/beadwork"
 BINARY="bw"
 
 # Allow override, otherwise prefer ~/.local/bin (no sudo), fall back to /usr/local/bin

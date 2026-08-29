@@ -17,13 +17,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
-const releaseURL = "https://api.github.com/repos/jallum/beadwork/releases/latest"
+const releaseURL = "https://api.github.com/repos/bkono/beadwork/releases/latest"
 
 // Injectable dependencies for testing. Production code uses the defaults.
 var (
@@ -502,7 +502,7 @@ func cmdUpgradeRepo(args []string, w Writer) error {
 	return nil
 }
 
-const changelogURL = "https://raw.githubusercontent.com/jallum/beadwork/v%s/CHANGELOG.md"
+const changelogURL = "https://raw.githubusercontent.com/bkono/beadwork/v%s/CHANGELOG.md"
 
 func fetchChangelog(version string) (string, error) {
 	resp, err := http.Get(fmt.Sprintf(changelogURL, version))

@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/jallum/beadwork/internal/treefs"
+	"github.com/bkono/beadwork/internal/treefs"
 )
 
 const BranchName = "beadwork"
@@ -104,6 +105,25 @@ func (r *Repo) TreeFS() *treefs.TreeFS {
 	return r.tfs
 }
 
+// Reopen replaces the in-memory go-git repository handle and TreeFS with
+// freshly-opened copies. Use this between retry attempts in concurrent
+// scenarios so any cached state (packed-refs cache, etc.) is discarded
+// and the next operation reads directly from disk. The new TreeFS is
+// returned so callers (e.g. issue.Store) can swap their own pointer.
+func (r *Repo) Reopen() (*treefs.TreeFS, error) {
+	repoDir := filepath.Dir(r.GitDir)
+	goRepo, err := openGitRepo(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("reopen repo: %w", err)
+	}
+	tfs, err := treefs.OpenFromRepo(goRepo, refLocal)
+	if err != nil {
+		return nil, fmt.Errorf("reopen treefs: %w", err)
+	}
+	r.tfs = tfs
+	return tfs, nil
+}
+
 // UserName reads user.name from the git config (local, then global, then
 // system) using go-git's ConfigScoped. Returns "unknown" if unset.
 func (r *Repo) UserName() string {
@@ -176,7 +196,8 @@ func (r *Repo) Init(prefix string) error {
 		}
 
 		if !localExists {
-			// Create local branch from remote
+			// fetch reopened the TreeFS at refLocal (empty, the ref doesn't
+			// exist yet); SetRef advances its snapshot to the new ref state.
 			remoteHash, err := r.tfs.LookupRef(refRemote)
 			if err != nil {
 				return fmt.Errorf("lookup remote ref: %w", err)
@@ -186,12 +207,6 @@ func (r *Repo) Init(prefix string) error {
 			}
 		}
 
-		// Reopen TreeFS to pick up the new ref
-		tfs, err := treefs.OpenFromRepo(r.tfs.Repo(), refLocal)
-		if err != nil {
-			return fmt.Errorf("reopen treefs: %w", err)
-		}
-		r.tfs = tfs
 		r.Prefix = r.readPrefix()
 	} else if !localExists {
 		// No branch anywhere — TreeFS will create it on first Commit
@@ -357,9 +372,13 @@ func (r *Repo) Sync() (status string, replayed []string, err error) {
 		return "no remote configured", nil, nil
 	}
 
-	// Try to fetch
+	// Try to fetch. Failure is OK — the remote may not have beadwork yet —
+	// but merging through stale go-git caches after a successful fetch is not.
 	refSpec := config.RefSpec(fmt.Sprintf("+%s:%s", refLocal, refRemote))
 	if fetchErr := r.fetch("origin", refSpec); fetchErr != nil {
+		if errors.Is(fetchErr, errReopenAfterFetch) {
+			return "", nil, fetchErr
+		}
 		// Remote branch may not exist — just push
 		if err := r.push(); err != nil {
 			return "", nil, fmt.Errorf("push failed: %w", err)
@@ -482,21 +501,40 @@ func (r *Repo) GetGitContext() GitContext {
 		ctx.LastCommit = strings.TrimSpace(out)
 	}
 
-	// .git is a file in worktrees, a directory in the main working tree
-	dotGit := filepath.Join(r.CWD, ".git")
-	if fi, err := os.Stat(dotGit); err == nil && !fi.IsDir() {
-		ctx.IsWorktree = true
+	// .git is a file in linked worktrees and a directory in the main working tree.
+	// Resolve the repository top-level first so this works from subdirectories too.
+	if out, err := execGit(r.CWD, "rev-parse", "--show-toplevel"); err == nil {
+		dotGit := filepath.Join(strings.TrimSpace(out), ".git")
+		if fi, statErr := os.Stat(dotGit); statErr == nil && !fi.IsDir() {
+			ctx.IsWorktree = true
+		}
 	}
 
 	return ctx
 }
 
+// errReopenAfterFetch marks a failure to reopen go-git state after a
+// successful fetch. Callers that tolerate fetch failures (the remote may not
+// have beadwork yet) must still treat this error as fatal.
+var errReopenAfterFetch = errors.New("reopen after fetch")
+
+// fetch shells out to `git fetch`, then reopens the in-memory go-git state so
+// the freshly-fetched packfiles and refs are visible — go-git would otherwise
+// keep serving stale object and ref caches.
 func (r *Repo) fetch(remoteName string, refSpec config.RefSpec) error {
-	_, err := execGit(r.RepoDir(), "fetch", remoteName, string(refSpec))
-	return err
+	if _, err := execGit(r.RepoDir(), "fetch", remoteName, string(refSpec)); err != nil {
+		return err
+	}
+	if _, err := r.Reopen(); err != nil {
+		return fmt.Errorf("%w: %s", errReopenAfterFetch, err)
+	}
+	return nil
 }
 
 func (r *Repo) gitPush(remoteName string, refSpec config.RefSpec) error {
+	if _, err := r.tfs.Stat(".bwconfig"); err != nil {
+		return fmt.Errorf("refusing to push beadwork branch without .bwconfig: %w", err)
+	}
 	_, err := execGit(r.RepoDir(), "push", "--no-verify", remoteName, string(refSpec))
 	return err
 }

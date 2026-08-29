@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 func TestLabel(t *testing.T) {

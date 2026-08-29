@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/tmpl"
-	"github.com/jallum/beadwork/prompts"
+	"github.com/bkono/beadwork/internal/tmpl"
+	"github.com/bkono/beadwork/prompts"
 )
 
 type OnboardData struct {

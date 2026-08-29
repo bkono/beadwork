@@ -3,10 +3,10 @@ package main
 import (
 	"fmt"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/md"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/md"
 )
 
 type CloseArgs struct {
@@ -36,22 +36,29 @@ func cmdClose(store *issue.Store, args []string, w Writer, _ *config.Config) (*c
 		return nil, err
 	}
 
-	iss, err := store.Close(ca.ID, ca.Reason)
+	var iss *issue.Issue
+	var unblocked []*issue.Issue
+	err = commitWithRetry(store, commitMaxRetries, func() (string, error) {
+		var cerr error
+		iss, cerr = store.Close(ca.ID, ca.Reason)
+		if cerr != nil {
+			return "", cerr
+		}
+		unblocked, cerr = store.NewlyUnblocked(iss.ID)
+		if cerr != nil {
+			return "", cerr
+		}
+		intent := fmt.Sprintf("close %s", iss.ID)
+		if ca.Reason != "" {
+			intent += fmt.Sprintf(" reason=%q", ca.Reason)
+		}
+		for _, u := range unblocked {
+			intent += fmt.Sprintf("\nunblocked %s", u.ID)
+		}
+		return intent, nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	unblocked, err := store.NewlyUnblocked(iss.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	intent := fmt.Sprintf("close %s", iss.ID)
-	if ca.Reason != "" {
-		intent += fmt.Sprintf(" reason=%q", ca.Reason)
-	}
-	if err := store.Commit(intent); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
 	if ca.JSON {
@@ -105,14 +112,17 @@ func cmdReopen(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 		return nil, err
 	}
 
-	iss, err := store.Reopen(ra.ID)
+	var iss *issue.Issue
+	err = commitWithRetry(store, commitMaxRetries, func() (string, error) {
+		var rerr error
+		iss, rerr = store.Reopen(ra.ID)
+		if rerr != nil {
+			return "", rerr
+		}
+		return fmt.Sprintf("reopen %s", iss.ID), nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	intent := fmt.Sprintf("reopen %s", iss.ID)
-	if err := store.Commit(intent); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
 	if ra.JSON {

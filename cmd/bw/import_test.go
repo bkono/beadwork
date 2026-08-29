@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 func TestCmdImportBasic(t *testing.T) {

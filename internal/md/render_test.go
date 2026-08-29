@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 var testNow = time.Date(2027, 4, 16, 12, 0, 0, 0, time.UTC)

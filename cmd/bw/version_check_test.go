@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/testutil"
 )
 
 func mockVersionCheck(t *testing.T) {
@@ -65,6 +65,9 @@ func TestCheckForNewerVersion_CacheMiss(t *testing.T) {
 	if c.LatestVersion != "1.0.0" {
 		t.Errorf("cached version = %q, want %q", c.LatestVersion, "1.0.0")
 	}
+	if c.ReleaseURL != releaseURL {
+		t.Errorf("cached release URL = %q, want %q", c.ReleaseURL, releaseURL)
+	}
 }
 
 func TestCheckForNewerVersion_CacheHitSkipsAPI(t *testing.T) {
@@ -80,6 +83,7 @@ func TestCheckForNewerVersion_CacheHitSkipsAPI(t *testing.T) {
 	cache := versionCache{
 		LastCheck:     now.Add(-1 * time.Hour).Format(time.RFC3339),
 		LatestVersion: "1.0.0",
+		ReleaseURL:    releaseURL,
 	}
 	data, _ := json.Marshal(cache)
 	os.WriteFile(filepath.Join(dir, "version-check.json"), data, 0644)
@@ -141,6 +145,9 @@ func TestCheckForNewerVersion_APIFailureWritesTimestamp(t *testing.T) {
 	if c.LastCheck == "" {
 		t.Error("lastCheck not set after failure")
 	}
+	if c.ReleaseURL != releaseURL {
+		t.Errorf("release URL = %q, want %q", c.ReleaseURL, releaseURL)
+	}
 
 	// Next call within 24h should NOT retry
 	fetched := false
@@ -167,6 +174,7 @@ func TestCheckForNewerVersion_StaleCache(t *testing.T) {
 	cache := versionCache{
 		LastCheck:     now.Add(-25 * time.Hour).Format(time.RFC3339),
 		LatestVersion: "1.0.0",
+		ReleaseURL:    releaseURL,
 	}
 	data, _ := json.Marshal(cache)
 	os.WriteFile(filepath.Join(dir, "version-check.json"), data, 0644)
@@ -183,6 +191,82 @@ func TestCheckForNewerVersion_StaleCache(t *testing.T) {
 	}
 	if got != "1.1.0" {
 		t.Errorf("got %q, want %q", got, "1.1.0")
+	}
+}
+
+func TestCheckForNewerVersion_CacheHitWrongReleaseURLRefetchesAPI(t *testing.T) {
+	mockVersionCheck(t)
+	dir := t.TempDir()
+	vcheckCacheDir = func() string { return dir }
+	vcheckCurrentVersion = func() string { return "0.9.0" }
+
+	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	vcheckNow = func() time.Time { return now }
+
+	// Fresh cache from a different release repo (e.g. upstream fork).
+	cache := versionCache{
+		LastCheck:     now.Add(-1 * time.Hour).Format(time.RFC3339),
+		LatestVersion: "9.9.9",
+		ReleaseURL:    "https://api.github.com/repos/jallum/beadwork/releases/latest",
+	}
+	data, _ := json.Marshal(cache)
+	os.WriteFile(filepath.Join(dir, "version-check.json"), data, 0644)
+
+	fetched := false
+	vcheckFetchRelease = func() (*ghRelease, error) {
+		fetched = true
+		return &ghRelease{TagName: "v1.0.0"}, nil
+	}
+
+	got := checkForNewerVersion()
+	if !fetched {
+		t.Error("expected API call when cached release URL does not match")
+	}
+	if got != "1.0.0" {
+		t.Errorf("got %q, want %q", got, "1.0.0")
+	}
+
+	// Rewritten cache should be tagged with the current release URL.
+	written, err := os.ReadFile(filepath.Join(dir, "version-check.json"))
+	if err != nil {
+		t.Fatalf("cache not written: %v", err)
+	}
+	var c versionCache
+	json.Unmarshal(written, &c)
+	if c.ReleaseURL != releaseURL {
+		t.Errorf("release URL = %q, want %q", c.ReleaseURL, releaseURL)
+	}
+}
+
+func TestCheckForNewerVersion_LegacyCacheWithoutReleaseURLRefetchesAPI(t *testing.T) {
+	mockVersionCheck(t)
+	dir := t.TempDir()
+	vcheckCacheDir = func() string { return dir }
+	vcheckCurrentVersion = func() string { return "0.9.0" }
+
+	now := time.Date(2026, 3, 6, 12, 0, 0, 0, time.UTC)
+	vcheckNow = func() time.Time { return now }
+
+	// Pre-migration cache entries had no release_url field.
+	cache := versionCache{
+		LastCheck:     now.Add(-1 * time.Hour).Format(time.RFC3339),
+		LatestVersion: "9.9.9",
+	}
+	data, _ := json.Marshal(cache)
+	os.WriteFile(filepath.Join(dir, "version-check.json"), data, 0644)
+
+	fetched := false
+	vcheckFetchRelease = func() (*ghRelease, error) {
+		fetched = true
+		return nil, fmt.Errorf("network timeout")
+	}
+
+	got := checkForNewerVersion()
+	if !fetched {
+		t.Error("expected API call when legacy cache has no release URL")
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty on failure", got)
 	}
 }
 

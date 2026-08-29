@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 type UpdateArgs struct {
@@ -94,14 +94,14 @@ func cmdUpdate(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 
 	now := store.Now()
 	if ua.DeferSet && ua.DeferUntil != "" {
-		resolved, err := resolveDate(ua.DeferUntil, now)
+		resolved, err := resolveDateAfterNow(ua.DeferUntil, now)
 		if err != nil {
 			return nil, err
 		}
 		ua.DeferUntil = resolved
 	}
 	if ua.DueSet && ua.Due != "" {
-		resolved, err := resolveDate(ua.Due, now)
+		resolved, err := resolveDateAfterNow(ua.Due, now)
 		if err != nil {
 			return nil, err
 		}
@@ -150,14 +150,17 @@ func cmdUpdate(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 		changes = append(changes, "parent="+ua.Parent)
 	}
 
-	iss, err := store.Update(ua.ID, opts)
+	var iss *issue.Issue
+	err = commitWithRetry(store, commitMaxRetries, func() (string, error) {
+		var uerr error
+		iss, uerr = store.Update(ua.ID, opts)
+		if uerr != nil {
+			return "", uerr
+		}
+		return fmt.Sprintf("update %s %s", iss.ID, strings.Join(changes, " ")), nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	intent := fmt.Sprintf("update %s %s", iss.ID, strings.Join(changes, " "))
-	if err := store.Commit(intent); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
 	if ua.JSON {

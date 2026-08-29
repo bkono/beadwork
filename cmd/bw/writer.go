@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/md"
+	"github.com/bkono/beadwork/internal/md"
 )
 
 // Style represents an ANSI text style.

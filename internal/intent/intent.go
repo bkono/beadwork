@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/issue"
-	"github.com/jallum/beadwork/internal/repo"
+	"github.com/bkono/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/repo"
 )
 
 // repoFrom extracts the *repo.Repo from a store's Committer.

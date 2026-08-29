@@ -9,3 +9,8 @@ CLAUDE.md
 # Code Coverage
 coverage.out
 
+# GoReleaser snapshot output
+/dist/
+
+# jsm: ignore Claude skills
+/.claude/skills/

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 type CreateArgs struct {
@@ -74,14 +74,14 @@ func cmdCreate(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 
 	now := store.Now()
 	if ca.DeferUntil != "" {
-		resolved, err := resolveDate(ca.DeferUntil, now)
+		resolved, err := resolveDateAfterNow(ca.DeferUntil, now)
 		if err != nil {
 			return nil, err
 		}
 		ca.DeferUntil = resolved
 	}
 	if ca.Due != "" {
-		resolved, err := resolveDate(ca.Due, now)
+		resolved, err := resolveDateAfterNow(ca.Due, now)
 		if err != nil {
 			return nil, err
 		}
@@ -98,30 +98,33 @@ func cmdCreate(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 		Parent:      ca.Parent,
 	}
 
-	iss, err := store.Create(ca.Title, opts)
+	var iss *issue.Issue
+	err = commitWithRetry(store, commitMaxRetries, func() (string, error) {
+		var cerr error
+		iss, cerr = store.Create(ca.Title, opts)
+		if cerr != nil {
+			return "", cerr
+		}
+		if len(ca.Labels) > 0 {
+			iss, cerr = store.Label(iss.ID, ca.Labels, nil)
+			if cerr != nil {
+				return "", cerr
+			}
+		}
+		intent := fmt.Sprintf("create %s p%d %s %q", iss.ID, iss.Priority, iss.Type, iss.Title)
+		if iss.Description != "" {
+			intent += fmt.Sprintf(" description=%q", iss.Description)
+		}
+		if iss.Due != "" {
+			intent += " due=" + iss.Due
+		}
+		if iss.Parent != "" {
+			intent += " parent=" + iss.Parent
+		}
+		return intent, nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	if len(ca.Labels) > 0 {
-		iss, err = store.Label(iss.ID, ca.Labels, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	intent := fmt.Sprintf("create %s p%d %s %q", iss.ID, iss.Priority, iss.Type, iss.Title)
-	if iss.Description != "" {
-		intent += fmt.Sprintf(" description=%q", iss.Description)
-	}
-	if iss.Due != "" {
-		intent += " due=" + iss.Due
-	}
-	if iss.Parent != "" {
-		intent += " parent=" + iss.Parent
-	}
-	if err := store.Commit(intent); err != nil {
-		return nil, fmt.Errorf("commit failed: %w", err)
 	}
 
 	if ca.Silent {

@@ -3,41 +3,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
-	"github.com/jallum/beadwork/internal/config"
+	"github.com/bkono/beadwork/internal/config"
 
-	"github.com/jallum/beadwork/internal/issue"
+	"github.com/bkono/beadwork/internal/issue"
 )
 
 // nilIfEmpty returns nil for empty slices so omitempty works.
 func nilIfEmpty(s []string) []string {
 	if len(s) == 0 {
 		return nil
-	}
-	return s
-}
-
-// toRFC3339Date converts YYYY-MM-DD to RFC3339 for bd compat.
-// Returns empty string if input is empty.
-func toRFC3339Date(s string) string {
-	if s == "" {
-		return ""
-	}
-	// Already RFC3339? Return as-is.
-	if strings.Contains(s, "T") {
-		return s
-	}
-	return s + "T00:00:00Z"
-}
-
-// fromRFC3339Date extracts YYYY-MM-DD from an RFC3339 or bare date string.
-func fromRFC3339Date(s string) string {
-	if s == "" {
-		return ""
-	}
-	if idx := strings.IndexByte(s, 'T'); idx >= 0 {
-		return s[:idx]
 	}
 	return s
 }

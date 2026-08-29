@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jallum/beadwork/internal/wrap"
+	"github.com/bkono/beadwork/internal/wrap"
 )
 
 // ANSI escape codes.

@@ -5,6 +5,7 @@ document covers what the system is trying to accomplish, how the prompts
 relate to each other, and how to validate that changes are working.
 
 Per-prompt design requirements live in dedicated docs:
+
 - [`agents.md`](agents.md) — the boot loader
 - [`prime.md`](prime.md) — the mental model
 - [`start.md`](start.md) — the point-of-action briefing
@@ -24,24 +25,27 @@ An agent that has been through the prompt system should:
    materialize it as an epic with children and dependencies. The plan is
    scratch; the tickets are what survive. `bw ready` is the execution loop.
 
-3. **Know how to start safely.** Worktrees isolate agent work from the
-   user's working tree. `bw start` delivers point-of-action instructions.
+3. **Know how to start safely on the current checkout.** The default is the
+   branch and working tree the user selected, even if that branch is `main`.
+   The agent should inspect dirty state, preserve changes it does not own,
+   and use `bw start` for point-of-action instructions when work is tracked.
    Landing (commit, close, sync) is part of doing — not a separate step.
 
-4. **Match workflow to delivery intent.** Not every change needs a ticket.
-   The agent should ask how the user wants work delivered — quick fix (no
-   ticket), branch/PR (ticket + worktree), or multi-step (epic). The user's
-   answer determines the workflow level. Blanket rules like "every change
-   gets a ticket" activate stochastically; the delivery question activates
-   deterministically (see bw-u3u).
+4. **Match workflow to delivery intent.** Not every change needs a ticket,
+   and not every ticket needs a branch, PR, or worktree. The default delivery
+   mode is current-branch work. Quick fixes can be direct; tracked work uses
+   issues on the current branch; multi-step or swarm work uses epics and child
+   tickets; branch/PR/worktree isolation is optional when requested or
+   configured.
 
 5. **Leave breadcrumbs.** Comments on issues serve double duty: notes to
    the agent's future self after compaction, and messages to collaborators
    in multi-agent setups.
 
 6. **Delegate effectively.** Sub-agents don't inherit context. The
-   orchestrator must include workflow steps in the handoff and verify
-   the work landed.
+   orchestrator must include workflow steps in the handoff, assign separate
+   tickets or non-overlapping scopes, and verify the work landed. A same-branch
+   swarm is a valid mode; isolation is a tool, not the default.
 
 ## Prompt Architecture
 
@@ -98,11 +102,12 @@ against actual agent behavior, not just read for plausibility.
 
 ### Test environment
 
-Use a fresh `git clone` for test repos — not worktrees of the main repo,
-which risks contamination. Real historical commits make good test tasks:
+Use a fresh `git clone` for test repos — not auxiliary worktrees of the main
+repo, which risks contamination. Real historical commits make good test tasks:
 checkout the parent commit, then ask the agent to implement the feature.
 
 Each test repo needs:
+
 - **CLAUDE.md** with the variant's bootstrap text (force-add past
   `.gitignore`: `git add -f CLAUDE.md`)
 - **A `bw` symlink** (`ln -s $(which bw) ./bw`) — agents sometimes use
@@ -137,11 +142,13 @@ tmux send-keys -t test-prompt 'cd /tmp/test-repo && unset CLAUDECODE && claude' 
 ```
 
 Send tasks and observe behavior:
+
 ```bash
 tmux send-keys -t test-prompt 'plan a multi-step refactor of the auth module' Enter
 ```
 
 Capture and analyze output:
+
 ```bash
 tmux capture-pane -t test-prompt -p -S -300
 ```
@@ -155,11 +162,11 @@ or review each prompt.
 | Behavior | How to observe |
 |----------|----------------|
 | Plans materialized as tickets | Give a multi-step task; check if `bw create` produces an epic with children |
-| Tickets created before code changes | Give a fix task; check if `bw create` is called before editing |
-| Worktrees used | Give any code task; check if EnterWorktree is invoked |
+| Current branch preserved by default | Give a code task; check that the agent does not create a branch/worktree unless asked |
+| Optional PR/worktree modes respected | Set repo config or explicitly ask; check that the agent follows that mode |
 | Landing completed | Give a task; check if commit + close + sync happen |
 | Sub-agent delegation includes workflow | Give a task requiring delegation; inspect the handoff prompt |
-| Dirty state handled | Dirty the repo before the task; check if the agent asks and waits |
+| Dirty state handled | Dirty the repo before the task; check if the agent identifies ownership before editing |
 
 ### Observing behavior vs. understanding rationale
 

@@ -1,6 +1,7 @@
 package treefs
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // initGitRepo creates a git repo with one commit on the default branch.
@@ -383,8 +385,8 @@ func TestCASConflict(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected CAS conflict error")
 	}
-	if !containsStr(err.Error(), "conflict") {
-		t.Fatalf("expected conflict error, got: %v", err)
+	if !errors.Is(err, ErrRefMoved) {
+		t.Fatalf("expected ErrRefMoved, got: %v", err)
 	}
 }
 
@@ -528,15 +530,195 @@ func TestCommitRespectsBWClockEnv(t *testing.T) {
 	}
 }
 
-func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && contains(s, substr))
+// --- Snapshot-consistency tests ---
+//
+// These tests verify that operations which move the underlying ref also
+// advance the TreeFS in-memory snapshot (baseRef). If any of these
+// regress, a subsequent Commit() on the same TreeFS instance will fail
+// with ErrRefMoved, surfacing to users as
+//   "commit failed: ref moved: ref refs/heads/beadwork (expected X, got Y)"
+
+func TestSnapshotConsistentAfterReset(t *testing.T) {
+	dir := initTestRepo(t)
+	tfs, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Create a second commit so we have somewhere to Reset to.
+	tfs.WriteFile("a.txt", []byte("a"))
+	if err := tfs.Commit("a"); err != nil {
+		t.Fatalf("Commit a: %v", err)
+	}
+	target := tfs.RefHash()
+
+	// Make another commit on top, then Reset back to the earlier target.
+	tfs.WriteFile("b.txt", []byte("b"))
+	if err := tfs.Commit("b"); err != nil {
+		t.Fatalf("Commit b: %v", err)
+	}
+	if err := tfs.Reset(target); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// A subsequent Commit must not see a stale baseRef.
+	tfs.WriteFile("c.txt", []byte("c"))
+	if err := tfs.Commit("c"); err != nil {
+		t.Fatalf("Commit after Reset: %v", err)
+	}
 }
 
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestSnapshotConsistentAfterRefresh(t *testing.T) {
+	dir := initTestRepo(t)
+	tfs1, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open tfs1: %v", err)
 	}
-	return false
+	tfs2, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open tfs2: %v", err)
+	}
+
+	// tfs1 commits, advancing the ref behind tfs2's back.
+	tfs1.WriteFile("from-tfs1.txt", []byte("x"))
+	if err := tfs1.Commit("tfs1 commit"); err != nil {
+		t.Fatalf("tfs1 Commit: %v", err)
+	}
+
+	// tfs2 refreshes, then commits — must succeed.
+	if err := tfs2.Refresh(); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	tfs2.WriteFile("from-tfs2.txt", []byte("y"))
+	if err := tfs2.Commit("tfs2 commit"); err != nil {
+		t.Fatalf("Commit after Refresh: %v", err)
+	}
+}
+
+func TestMergeCommitDoesNotSynthesizeEmptyTreeWhenInputsUnreadable(t *testing.T) {
+	dir := initTestRepo(t)
+	tfs, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	baseHash := tfs.RefHash()
+	localHash := writeCommitWithMissingTree(t, tfs, baseHash, "local intent")
+	remoteHash := writeCommitWithMissingTree(t, tfs, baseHash, "remote intent")
+
+	// Regression guard for the production failure where bw sync pushed a
+	// commit whose tree was 4b825dc6... (the canonical empty tree), deleting
+	// every issue. Merge inputs that cannot be read must abort; treating an
+	// unreadable side as an empty file set turns I/O/cache failures into mass
+	// deletions.
+	merged, err := tfs.MergeCommit(localHash, remoteHash, []string{"local intent"})
+	if err == nil {
+		t.Fatalf("MergeCommit succeeded (merged=%v) with unreadable input trees; want an error", merged)
+	}
+	if merged {
+		t.Fatal("MergeCommit reported merged=true despite returning an error")
+	}
+}
+
+func writeCommitWithMissingTree(t *testing.T, tfs *TreeFS, parent plumbing.Hash, msg string) plumbing.Hash {
+	t.Helper()
+	commit := &object.Commit{
+		Author: object.Signature{
+			Name: "beadwork", Email: "beadwork@localhost", When: time.Now(),
+		},
+		Committer: object.Signature{
+			Name: "beadwork", Email: "beadwork@localhost", When: time.Now(),
+		},
+		Message:      msg,
+		TreeHash:     plumbing.NewHash("1111111111111111111111111111111111111111"),
+		ParentHashes: []plumbing.Hash{parent},
+	}
+	obj := tfs.Repo().Storer.NewEncodedObject()
+	if err := commit.Encode(obj); err != nil {
+		t.Fatalf("encode corrupt commit: %v", err)
+	}
+	hash, err := tfs.Repo().Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatalf("store corrupt commit: %v", err)
+	}
+	return hash
+}
+
+func TestSnapshotConsistentAfterMergeCommit(t *testing.T) {
+	dir := initTestRepo(t)
+	tfs, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Establish a shared base.
+	tfs.WriteFile("base.txt", []byte("base"))
+	if err := tfs.Commit("base"); err != nil {
+		t.Fatalf("Commit base: %v", err)
+	}
+	baseHash := tfs.RefHash()
+
+	// Build a "remote" branch one commit ahead.
+	if err := tfs.SetRef("refs/remotes/origin/beadwork", baseHash); err != nil {
+		t.Fatalf("SetRef remote: %v", err)
+	}
+	// Make a divergent local commit, then reset remote ref forward via a
+	// second TreeFS so the two refs diverge from the same base.
+	tfs2, err := Open(dir, "refs/remotes/origin/beadwork")
+	if err != nil {
+		t.Fatalf("Open remote tfs: %v", err)
+	}
+	tfs2.WriteFile("remote-only.txt", []byte("r"))
+	if err := tfs2.Commit("remote work"); err != nil {
+		t.Fatalf("remote Commit: %v", err)
+	}
+	remoteHash := tfs2.RefHash()
+
+	tfs.WriteFile("local-only.txt", []byte("l"))
+	if err := tfs.Commit("local work"); err != nil {
+		t.Fatalf("local Commit: %v", err)
+	}
+	localHash := tfs.RefHash()
+
+	merged, err := tfs.MergeCommit(localHash, remoteHash, []string{"local work"})
+	if err != nil {
+		t.Fatalf("MergeCommit: %v", err)
+	}
+	if !merged {
+		t.Fatal("expected non-conflicting merge")
+	}
+
+	// Subsequent Commit must not be stale.
+	tfs.WriteFile("after-merge.txt", []byte("m"))
+	if err := tfs.Commit("after merge"); err != nil {
+		t.Fatalf("Commit after MergeCommit: %v", err)
+	}
+}
+
+// SetRef must keep the in-memory snapshot consistent when it targets the
+// ref this TreeFS is tracking. Otherwise callers that follow SetRef with
+// a Commit (or with reads gated by maybeRefresh's overlay guard) see a
+// silent ErrRefMoved.
+func TestSnapshotConsistentAfterSetRefOnTrackedRef(t *testing.T) {
+	dir := initTestRepo(t)
+	tfs, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Create a second commit, capture its hash, then rewind via SetRef
+	// on the tracked ref.
+	original := tfs.RefHash()
+	tfs.WriteFile("x.txt", []byte("x"))
+	if err := tfs.Commit("x"); err != nil {
+		t.Fatalf("Commit x: %v", err)
+	}
+	if err := tfs.SetRef("refs/heads/beadwork", original); err != nil {
+		t.Fatalf("SetRef: %v", err)
+	}
+
+	tfs.WriteFile("y.txt", []byte("y"))
+	if err := tfs.Commit("y"); err != nil {
+		t.Fatalf("Commit after SetRef on tracked ref: %v", err)
+	}
 }
