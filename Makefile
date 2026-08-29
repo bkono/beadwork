@@ -1,12 +1,19 @@
 GORELEASER := go tool goreleaser
+SVU := go tool svu
 
-.PHONY: release-check release-snapshot release release-local
+.PHONY: release-check release-snapshot release release-local next-version release-prepare
 
 release-check:
 	$(GORELEASER) check
 
 release-snapshot:
 	$(GORELEASER) release --clean --snapshot
+
+next-version:
+	@$(SVU) next
+
+release-prepare:
+	@./scripts/prepare-release.sh
 
 # Create and push a semver tag; the Release workflow publishes to GitHub.
 release: release-check

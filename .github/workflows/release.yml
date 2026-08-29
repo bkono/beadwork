@@ -1,12 +1,20 @@
 name: Release
 
+# Manual or local tag pushes (maintainer credentials), plus a dispatch path to
+# republish an existing tag if GoReleaser failed after tagging. Automated
+# releases from main merges run in tag-release.yml.
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish (e.g. v0.14.0)
+        required: true
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -21,6 +29,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-go@v5
         with:
