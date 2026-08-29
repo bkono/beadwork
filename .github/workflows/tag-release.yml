@@ -1,0 +1,47 @@
+name: Tag Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tag-release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository == 'bkono/beadwork' &&
+      !startsWith(github.event.head_commit.message, 'chore(release):')
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.0"
+          cache: true
+
+      - name: Prepare release
+        id: prep
+        run: ./scripts/prepare-release.sh
+
+      - name: Commit, tag, and push
+        if: steps.prep.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md cmd/bw/main.go
+          git commit -m "chore(release): v${VERSION}"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin main
+          git push origin "v${VERSION}"
