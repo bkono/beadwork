@@ -31,11 +31,25 @@ if [ -z "$prev_ref" ]; then
 	prev_ref="$(git rev-list --max-parents=0 HEAD)"
 fi
 
-mapfile -t commits < <(git log "${prev_ref}..HEAD" --pretty=format:%s --no-merges)
-if [ "${#commits[@]}" -eq 0 ]; then
+mapfile -t commit_shas < <(git log "${prev_ref}..HEAD" --pretty=format:%H --no-merges)
+if [ "${#commit_shas[@]}" -eq 0 ]; then
 	echo "No commits found between ${prev_ref} and HEAD"
 	exit 1
 fi
+
+commit_subject() {
+	git log -1 --pretty=format:%s "$1"
+}
+
+commit_is_breaking() {
+	local sha="$1"
+	local subject body
+	subject="$(git log -1 --pretty=format:%s "$sha")"
+	body="$(git log -1 --pretty=format:%b "$sha")"
+	[[ "$subject" =~ !: ]] && return 0
+	grep -q '^BREAKING CHANGE:' <<<"$body" && return 0
+	return 1
+}
 
 release_date="$(date -u +%Y-%m-%d)"
 section_file="$(mktemp)"
@@ -56,18 +70,16 @@ matches_prefix() {
 	return 1
 }
 
-is_breaking() {
-	[[ "$1" =~ !: ]]
-}
-
 append_group() {
 	local title="$1"
 	shift
 	local -a prefixes=("$@")
 	local found=false
+	local sha subject
 
-	for subject in "${commits[@]}"; do
-		if is_breaking "$subject"; then
+	for sha in "${commit_shas[@]}"; do
+		subject="$(commit_subject "$sha")"
+		if commit_is_breaking "$sha"; then
 			continue
 		fi
 		if matches_prefix "$subject" "${prefixes[@]}"; then
@@ -87,10 +99,13 @@ append_group() {
 
 append_breaking_group() {
 	local found=false
-	for subject in "${commits[@]}"; do
-		if ! is_breaking "$subject"; then
+	local sha subject
+
+	for sha in "${commit_shas[@]}"; do
+		if ! commit_is_breaking "$sha"; then
 			continue
 		fi
+		subject="$(commit_subject "$sha")"
 		if [ "$found" = false ]; then
 			echo "### Breaking Changes" >>"$section_file"
 			echo >>"$section_file"
@@ -109,8 +124,9 @@ append_group "Bug Fixes" fix
 append_group "Performance" perf
 
 other_found=false
-for subject in "${commits[@]}"; do
-	if is_breaking "$subject"; then
+for sha in "${commit_shas[@]}"; do
+	subject="$(commit_subject "$sha")"
+	if commit_is_breaking "$sha"; then
 		continue
 	fi
 	if matches_prefix "$subject" feat fix perf chore ci docs test style build; then
