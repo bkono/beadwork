@@ -1,5 +1,8 @@
 name: Release
 
+# Manual or local tag pushes (maintainer credentials). Automated releases from
+# main merges run GoReleaser in tag-release.yml because GITHUB_TOKEN tag
+# pushes do not trigger downstream workflows.
 on:
   push:
     tags:

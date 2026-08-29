@@ -18,7 +18,7 @@ jobs:
     if: >-
       github.repository == 'bkono/beadwork' &&
       !startsWith(github.event.head_commit.message, 'chore(release):')
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,3 +45,17 @@ jobs:
           git tag -a "v${VERSION}" -m "Release v${VERSION}"
           git push origin main
           git push origin "v${VERSION}"
+
+      # GITHUB_TOKEN pushes do not trigger other workflows, so publish here
+      # instead of relying on release.yml's tag push trigger.
+      - name: Checkout release tag
+        if: steps.prep.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.prep.outputs.version }}
+        run: git checkout "v${VERSION}"
+
+      - name: Publish release
+        if: steps.prep.outputs.release == 'true'
+        run: go tool goreleaser release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
