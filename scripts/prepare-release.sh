@@ -47,7 +47,7 @@ commit_is_breaking() {
 	subject="$(git log -1 --pretty=format:%s "$sha")"
 	body="$(git log -1 --pretty=format:%b "$sha")"
 	[[ "$subject" =~ !: ]] && return 0
-	grep -q '^BREAKING CHANGE:' <<<"$body" && return 0
+	grep -qE '^BREAKING[- ]CHANGE:' <<<"$body" && return 0
 	return 1
 }
 
